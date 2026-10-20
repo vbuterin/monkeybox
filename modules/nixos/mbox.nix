@@ -322,6 +322,10 @@ let
     postPatch = (old.postPatch or "") + ''
       cp ${../../programs/mbox/nested-input.c} backend/wayland/nested-input.c
       cp ${../../programs/mbox/caret.h} backend/wayland/caret.h
+      cp ${../../programs/mbox/sway-caret-state.h} backend/wayland/sway-caret-state.h
+      cp ${../../tests/mbox-caret-protocol.c} mbox-caret-protocol-test.c
+      substituteInPlace mbox-caret-protocol-test.c \
+        --replace-fail '../programs/mbox/sway-caret-state.h' 'backend/wayland/sway-caret-state.h'
       cp ${../../tests/mbox-nested-input.c} mbox-nested-input-test.c
       substituteInPlace mbox-nested-input-test.c \
         --replace-fail '../programs/mbox/nested-input.c' 'backend/wayland/nested-input.c'
@@ -342,6 +346,13 @@ let
       $CC -D_GNU_SOURCE -Wall -Wextra -I../backend/wayland \
         mbox-caret-test.c -lm -o mbox-caret-test
       ./mbox-caret-test
+      $CC -Wall -Wextra -Wno-unused-parameter \
+        -I../include -Iinclude -I.. -Iprotocol -I../protocol \
+        $(pkg-config --cflags wayland-client wayland-server xkbcommon pixman-1 libdrm) \
+        ../mbox-caret-protocol-test.c protocol/text-input-unstable-v3-protocol.c \
+        -L. -lwlroots-0.20 \
+        $(pkg-config --libs wayland-client wayland-server) -o mbox-caret-protocol-test
+      LD_LIBRARY_PATH="$PWD:''${LD_LIBRARY_PATH:-}" ./mbox-caret-protocol-test
     '';
   });
   nestedSway = (pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; }).overrideAttrs (old: {
@@ -349,6 +360,7 @@ let
     postPatch = (old.postPatch or "") + ''
       cp ${../../programs/mbox/sway-caret.c} sway/input/sway-caret.c
       cp ${../../programs/mbox/caret.h} sway/input/caret.h
+      cp ${../../programs/mbox/sway-caret-state.h} sway/input/sway-caret-state.h
     '';
   });
 

@@ -24,7 +24,12 @@ patch = (root/'patches/mbox-sway-caret.patch').read_text()
 assert 'mbox-sway-caret.patch' in module and 'mbox-caret-test.c -lm' in module
 assert 'wlr_scene_node_for_each_buffer' in caret and 'current.cursor_rectangle' in caret
 assert 'pid == satellite_pid' in caret and 'mbox_caret_to_output' in caret
-assert 'current_enabled' in caret and 'active_features' in caret
+state = (root/'programs/mbox/sway-caret-state.h').read_text()
+assert 'mbox_caret_has_rectangle(text->input, focus)' in caret
+assert 'input->current_enabled' in state and 'input->current.features &' in state
+assert 'wlr_text_input_v3_send_done(input)' in state
+assert patch.count('mbox_caret_ack(text_input->input,') == 3
+assert 'mbox-caret-protocol-test' in module and 'sway/input/sway-caret-state.h' in module
 assert 'input->entered' in relay and 'output->surface == input->entered' in relay
 assert 'now - caret.time_ms <= 250' in relay
 assert 'wl_event_source_remove(relay->mbox_caret_timer)' in patch

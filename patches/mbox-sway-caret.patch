@@ -8,7 +8,31 @@
  
  static struct sway_text_input *relay_get_focusable_text_input(
  		struct sway_input_method_relay *relay) {
-@@ -363,6 +364,9 @@
+@@ -244,6 +245,7 @@
+ static void handle_text_input_enable(struct wl_listener *listener, void *data) {
+ 	struct sway_text_input *text_input = wl_container_of(listener, text_input,
+ 		text_input_enable);
++	if (mbox_caret_ack(text_input->input, text_input->relay->input_method != NULL)) return;
+ 	if (text_input->input->focused_surface == NULL) {
+ 		sway_log(SWAY_DEBUG, "Enabling text input, but no longer focused");
+ 		return;
+@@ -260,6 +262,7 @@
+ 		void *data) {
+ 	struct sway_text_input *text_input = wl_container_of(listener, text_input,
+ 		text_input_commit);
++	if (mbox_caret_ack(text_input->input, text_input->relay->input_method != NULL)) return;
+ 	if (text_input->input->focused_surface == NULL) {
+ 		sway_log(SWAY_DEBUG, "Unfocused text input tried to commit an update");
+ 		return;
+@@ -290,6 +293,7 @@
+ 		void *data) {
+ 	struct sway_text_input *text_input = wl_container_of(listener, text_input,
+ 		text_input_disable);
++	if (mbox_caret_ack(text_input->input, text_input->relay->input_method != NULL)) return;
+ 	if (text_input->input->focused_surface == NULL) {
+ 		sway_log(SWAY_DEBUG, "Disabling text input, but no longer focused");
+ 		return;
+@@ -363,6 +367,9 @@
  	}
  
  	sway_text_input_create(relay, wlr_text_input);
@@ -18,7 +42,7 @@
  }
  
  static void input_popup_set_focus(struct sway_input_popup *popup,
-@@ -630,6 +634,10 @@
+@@ -630,6 +637,10 @@
  void sway_input_method_relay_init(struct sway_seat *seat,
  		struct sway_input_method_relay *relay) {
  	relay->seat = seat;
@@ -29,7 +53,7 @@
  	wl_list_init(&relay->text_inputs);
  	wl_list_init(&relay->input_popups);
  
-@@ -650,6 +658,7 @@
+@@ -650,6 +661,7 @@
  }
  
  void sway_input_method_relay_finish(struct sway_input_method_relay *relay) {
@@ -37,7 +61,7 @@
  	sway_input_method_relay_finish_text_input(relay);
  	sway_input_method_relay_finish_input_method(relay);
  }
-@@ -677,7 +686,7 @@
+@@ -677,7 +689,7 @@
  		if (surface
  				&& wl_resource_get_client(text_input->input->resource)
  				== wl_resource_get_client(surface->resource)) {

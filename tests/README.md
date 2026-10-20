@@ -122,6 +122,14 @@ These limits must not be described as universal X11 compatibility.
 - Patched Sway `text_input.c` syntax-compiles against Sway 1.12/wlroots 0.20.2
   headers. The updated wlroots helper compiles and passes the existing Unicode
   tests. The GTK selector compiled and initialized on both private backends.
+- `mbox-caret-protocol.c` runs a real wlroots text-input-v3 server and client
+  over a private socketpair. It tests inactive/enable/disable acknowledgements,
+  exact serials, a first rectangle arriving after enable, movement, and clearing
+  stale geometry on re-enable. It uses the production state/ack helpers and runs
+  in the nested wlroots derivation's `postCheck`.
+- A disposable Electron 43.6.0 Wayland textarea reproduced the missing-`done`
+  stall: no real caret without acknowledgements; `(153,216,0,15)` with them.
+  This was a private headless Sway protocol probe, not the Signal profile.
 - These are component results, **not** an observed host candidate popup or a
   rebuilt VM. Native client caret publication, final popup placement, window
   move/resize and HiDPI must still be exercised through the rebuilt guest.

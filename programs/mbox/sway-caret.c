@@ -3,6 +3,7 @@
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_output_layout.h>
 #include "caret.h"
+#include "sway-caret-state.h"
 
 struct mbox_caret_scene {
     struct wlr_surface *surface;
@@ -28,8 +29,7 @@ static int mbox_update_caret(void *data) {
         bool valid = false;
         struct sway_text_input *text;
         wl_list_for_each(text, &relay->text_inputs, link) {
-            if (text->input->focused_surface == focus && text->input->current_enabled &&
-                    (text->input->active_features & WLR_TEXT_INPUT_V3_FEATURE_CURSOR_RECTANGLE)) {
+            if (mbox_caret_has_rectangle(text->input, focus)) {
                 struct wlr_box box = text->input->current.cursor_rectangle;
                 result.x = box.x; result.y = box.y;
                 result.width = box.width; result.height = box.height;

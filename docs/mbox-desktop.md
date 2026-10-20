@@ -54,7 +54,13 @@ XIM commits over 16 KiB are refused to stay inside protocol encoding limits.
 
 Candidate UI stays on the host. Guest Sway forwards the focused application's
 text-input-v3 cursor rectangle, including scene/window offsets and nested output
-scale, into the parent output surface. Geometry is refreshed every 30 ms so
+scale, into the parent output surface. In this guest-only mode, Sway acknowledges
+text-input commits with `done(current_serial)` even without a local input method;
+Electron otherwise waits indefinitely before sending its real caret. Rectangles
+sent after the initial enable commit are accepted, not just enable-time fields.
+No text/preedit events are synthesized by these acknowledgements. If a local
+input method exists, its normal acknowledgement path remains authoritative.
+Geometry is refreshed every 30 ms so
 moving/resizing a window also moves the candidate anchor. Parent HiDPI scaling
 is not applied twice. For X11, the bridge reads XIM spot-location attributes,
 translates child-window coordinates into top-level pixels, and scales them to
