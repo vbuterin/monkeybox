@@ -739,12 +739,14 @@ if [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
     if [ "$DRY_RUN" != 1 ]; then
         @@AUDIO_HOST@@ "unix:$pulse_socket" "$AUDIO" "$MICROPHONE" "$AUDIO_RUNTIME" &
         AUDIO_PID=$!
-        for ((i=0; i<250; i++)); do
-            [ -S "$AUDIO_RUNTIME/pulse" ] && break
+        for ((i=0; i<750; i++)); do
+            [ -f "$AUDIO_RUNTIME/ready" ] && break
             kill -0 "$AUDIO_PID" 2>/dev/null || { echo 'mbox: audio isolation server failed' >&2; exit 1; }
             sleep .02
         done
-        [ -S "$AUDIO_RUNTIME/pulse" ] || { echo 'mbox: audio isolation server timed out' >&2; exit 1; }
+        [ -f "$AUDIO_RUNTIME/ready" ] && kill -0 "$AUDIO_PID" 2>/dev/null || {
+            echo 'mbox: audio isolation server failed or timed out' >&2; exit 1;
+        }
     fi
     # Only this fixed-capability server is reachable, never the host native socket.
     DESKTOP_ARGS+=(--vsock "$AUDIO_RUNTIME/pulse:5002")

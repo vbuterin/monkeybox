@@ -372,7 +372,8 @@ let
 
   audioHost = pkgs.writeShellScript "mbox-audio-host" ''
     exec ${pkgs.python3}/bin/python3 ${../../programs/mbox/audio-host.py} \
-      ${pkgs.pulseaudio}/bin/pulseaudio ${pkgs.pulseaudio}/bin/pactl "$@"
+      ${pkgs.pulseaudio}/bin/pulseaudio ${pkgs.pulseaudio}/bin/pactl \
+      ${pkgs.dbus}/bin/dbus-run-session "$@"
   '';
 
   desktopGuest = pkgs.writeShellScript "mbox-desktop-guest" (builtins.replaceStrings

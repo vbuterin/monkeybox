@@ -25,8 +25,8 @@ before booting. Noctalia tests are intentionally not part of this project.
 
 ## Check tiers and source snapshots
 
-The `checks.x86_64-linux.policy` derivation runs ten fast policy/helper scripts: source-package pins,
-resolver mocks, network assembly, camera host harness, options, audio policy, file mounts,
+The `checks.x86_64-linux.policy` derivation runs eleven fast policy/helper scripts: source-package pins,
+resolver mocks, network assembly, camera host harness, options, audio policy, desktop IM defaults, file mounts,
 home-project mounts, clipboard policy and preview. Network assembly is distinct
 from its explicit Nix evaluation below. Use the explicit `nix build` gate above:
 flake-check summaries and cached/build-vs-run counts are not a test count.
@@ -71,6 +71,24 @@ lifecycle behavior remain unverified.
   VM, live IME/candidate, Xwayland, font-rendering or NixOS build result is claimed
   for this follow-up. Nested IME currently forwards commits only, not inline
   preedit or surrounding-text edits.
+
+## Startup regression after the font/input/audio release
+
+The reported Signal crash reproduced in a private GTK/Xwayland fixture with
+`GTK_IM_MODULE=wayland`. The guest now clears backend-specific IM overrides:
+GTK selects its own frontend, and nested X11 receives the existing commit relay.
+`python3 tests/mbox-desktop-im.py SWAY XWAYLAND_SATELLITE LIBGTK3` passed for
+both display backends with fatal GTK criticals enabled; its negative control
+reproduces the old X11 assertion. No Signal profile is opened by this test.
+
+The audio runtime test now requires `dbus-run-session` on PATH. It creates a
+private fixture bus already occupied by the upstream Pulse daemon, checks the
+bridge's separate bus and selected defaults, and rejects an unreachable upstream.
+A mocked delayed-device test verifies that socket availability alone cannot
+signal readiness. Both the pure and real Pulse tests passed locally. The bridge
+uses a self-contained bus configuration, not the host `/etc/dbus-1` tree.
+
+These are component regression tests, not a rebuilt VM or full Signal call test.
 
 ## Extraction validation
 

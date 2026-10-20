@@ -42,9 +42,11 @@ ALSA
 fi
 if [ "$wayland" = 1 ]; then
     export LIBGL_ALWAYS_SOFTWARE=1
-    # Use compositor text input, not a nonexistent guest Fcitx/session-bus socket.
-    export GTK_IM_MODULE=wayland QT_IM_MODULE=wayland MOZ_ENABLE_WAYLAND=1
-    unset XMODIFIERS
+    # Let each toolkit select its IM frontend for its actual display backend.
+    # Forcing GTK's Wayland IM crashes X11 Electron applications. Native GTK
+    # selects Wayland text input automatically; nested X11 gets relayed commits.
+    unset GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
+    export MOZ_ENABLE_WAYLAND=1
     # X11 sockets and Xwayland live inside this VM, spawned only on first use.
     # The host-side Wayland allowlist remains authoritative for X11 clients too.
     export PATH="@@SATELLITE_BIN@@:$PATH"

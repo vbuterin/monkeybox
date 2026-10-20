@@ -20,12 +20,18 @@ its own playback, not other host applications or the host microphone without
 `-r`. Microphone input selects the host's current default non-monitor source at
 launch; selecting a monitor fails closed. ALSA applications receive a private
 Pulse configuration. No native PipeWire FD forwarding is attempted.
+Each audio daemon has its own minimal D-Bus session (no host service activation).
+Tunnel devices appear asynchronously: the host helper waits for the requested
+devices, sets defaults, then publishes a readiness marker. A socket without
+ready devices does not permit VM launch.
 
 ## Input methods
 
 The Waypipe filter permits `zwp_text_input_manager_v3` (application-side input),
 not host input-method registration, keyboard grabs or virtual-input protocols.
-Native visual applications can use the host compositor's IME. The guest-only
+Native visual applications can use the host compositor's IME. Backend-specific
+GTK/Qt IM overrides are cleared so each toolkit chooses its actual display's
+frontend; forcing GTK's Wayland module on an X11 Electron window can abort it. The guest-only
 wlroots used by nested clipboard Sway preserves parent keymaps and consumes
 host IME commits, translating Unicode into guest-local key events for both
 Wayland and Xwayland applications. This needs no host session bus, Fcitx socket,
