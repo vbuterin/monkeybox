@@ -51,11 +51,18 @@ test -r "$FONTCONFIG_FILE"
 font=$(fc-match -f '%{file}' sans)
 test -n "$font" && test -r "$font"
 printf 'HOOK_FONT_MATCH_OK: %s\\n' "$font"
+for lang in zh-cn ru; do
+    family=$(fc-match -f '%{family}' "sans:lang=$lang")
+    font=$(fc-match -f '%{file}' "sans:lang=$lang")
+    test -r "$font"
+    printf 'LANG_FONT_MATCH_OK %s: %s\\n' "$lang" "$family"
+done
 '''
 result = subprocess.run(base + [script, 'font-test', str(config)],
                         capture_output=True, text=True, timeout=30)
 assert result.returncode == 0, result.stdout + result.stderr
-assert 'HOOK_FONT_MATCH_OK:' in result.stdout and 'DejaVu' in result.stdout, result.stdout
+assert 'HOOK_FONT_MATCH_OK:' in result.stdout, result.stdout
+assert re.search(r'LANG_FONT_MATCH_OK zh-cn: .*CJK', result.stdout), result.stdout
 # Local-image fonts use real copied bytes, not a store symlink: exercise separately.
 local = Path(exports[0])
 assert '/usr/share/mbox-fonts' in local.read_text()

@@ -25,8 +25,8 @@ before booting. Noctalia tests are intentionally not part of this project.
 
 ## Check tiers and source snapshots
 
-The `checks.x86_64-linux.policy` derivation runs nine fast policy/helper scripts: source-package pins,
-resolver mocks, network assembly, camera host harness, options, file mounts,
+The `checks.x86_64-linux.policy` derivation runs ten fast policy/helper scripts: source-package pins,
+resolver mocks, network assembly, camera host harness, options, audio policy, file mounts,
 home-project mounts, clipboard policy and preview. Network assembly is distinct
 from its explicit Nix evaluation below. Use the explicit `nix build` gate above:
 flake-check summaries and cached/build-vs-run counts are not a test count.
@@ -55,6 +55,22 @@ The review follow-up reran the full desktop suite, bulk integrity, font fallback
 production synthetic camera bridge and expanded pure checks. The synthetic camera
 still emitted expected no-host-bus/RTKit warnings. Non-NixOS runtime and broad
 lifecycle behavior remain unverified.
+
+## Font/input/audio follow-up (local, not published)
+
+- `python3 tests/mbox-audio.py --runtime PULSEAUDIO PACTL` runs real isolated
+  host Pulse servers with synthetic source/sink devices. It checks all three
+  playback/capture combinations and denies guest module loading and server exit.
+  It does not read the live host microphone or play on host speakers.
+- `mbox-nested-input.c` exercises real wlroots/xkb objects for Russian, Chinese,
+  emoji, modifier/keymap restoration and malformed UTF-8. The guest wlroots
+  derivation runs it in `postCheck`. A manual compile/run against installed
+  wlroots 0.20.2 passed; the modified Nix derivation has not been built yet.
+- Pure policy/helper scripts and shell syntax checks passed locally.
+- Updated font fallback and desktop tests require a rebuilt fixture. No full
+  VM, live IME/candidate, Xwayland, font-rendering or NixOS build result is claimed
+  for this follow-up. Nested IME currently forwards commits only, not inline
+  preedit or surrounding-text edits.
 
 ## Extraction validation
 

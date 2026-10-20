@@ -105,7 +105,7 @@ with tempfile.TemporaryDirectory(prefix="mbox-runtime-") as tmp:
             wav.setparams((1, 2, 44100, 0, "NONE", "not compressed"))
             wav.writeframes(b"".join(struct.pack("<h", int(12000 * math.sin(i * 2 * math.pi * 440 / 44100))) for i in range(44100)))
         player = run(["-a"], '''set -e
-            parec --device=mbox_fixture.monitor --raw --format=s16le --rate=44100 --channels=1 > /tmp/captured.pcm &
+            parec --device=mbox_output.monitor --raw --format=s16le --rate=44100 --channels=1 > /tmp/captured.pcm &
             capture=$!
             trap 'kill "$capture" 2>/dev/null || true' EXIT
             sleep .3
@@ -123,7 +123,7 @@ with tempfile.TemporaryDirectory(prefix="mbox-runtime-") as tmp:
         (root / 'runtime/pulse/native').rename(alternate)
         for endpoint in (str(alternate), 'unix:' + str(alternate)):
             env['PULSE_SERVER'] = endpoint
-            assert 'mbox_fixture' in run(['-a'], 'pactl list short sinks')
+            assert 'mbox_output' in run(['-a'], 'pactl list short sinks')
         for endpoint in ('tcp:127.0.0.1:4713', 'unix:/nonexistent/mbox-pulse'):
             env['PULSE_SERVER'] = endpoint
             result = subprocess.run([wrapper, str(root/'project'), '-a', '--', 'true'],
@@ -133,7 +133,7 @@ with tempfile.TemporaryDirectory(prefix="mbox-runtime-") as tmp:
         env['PULSE_SERVER'] = 'unix:' + str(alternate)
         runtime_dir = env.pop('XDG_RUNTIME_DIR')
         try:
-            assert 'mbox_fixture' in run(['-a'], 'pactl list short sinks')
+            assert 'mbox_output' in run(['-a'], 'pactl list short sinks')
         finally:
             env['XDG_RUNTIME_DIR'] = runtime_dir
         print('PULSE_SERVER_OVERRIDE_OK')
@@ -141,7 +141,7 @@ with tempfile.TemporaryDirectory(prefix="mbox-runtime-") as tmp:
                   'set -e; wayland-info; pactl info; pactl list short sinks; '
                   'head -c 19200 /dev/zero | pacat --playback --raw --rate=48000 --channels=2; '
                   'echo DESKTOP_OK')
-        assert "wl_compositor" in out and "mbox_fixture" in out and "DESKTOP_OK" in out
+        assert "wl_compositor" in out and "mbox_output" in out and "DESKTOP_OK" in out
         # Compare the actual exposed registry against a fixed policy, not merely
         # a few required globals. The host fixture must advertise forbidden ones.
         probe = Path(__file__).with_name('wayland-registry-probe.py')
@@ -152,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix="mbox-runtime-") as tmp:
             'wl_compositor', 'wl_subcompositor', 'wl_shm', 'wl_output', 'wl_seat',
             'xdg_wm_base', 'wp_viewporter', 'wp_presentation',
             'wp_fractional_scale_manager_v1', 'zxdg_output_manager_v1',
-            'zxdg_decoration_manager_v1', 'zwp_pointer_gestures_v1',
+            'zxdg_decoration_manager_v1', 'zwp_pointer_gestures_v1', 'zwp_text_input_manager_v3',
             'zwp_relative_pointer_manager_v1', 'zwp_pointer_constraints_v1',
         }
         assert {'wl_compositor', 'wl_shm', 'xdg_wm_base'} <= guest_globals.keys()

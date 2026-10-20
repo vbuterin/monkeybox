@@ -77,19 +77,23 @@ let
   # is involved at all.
   baseImageRef = "mbox-base:latest";
 
-  # Self-contained guest fonts: no host /etc/fonts or home/profile font mounts.
+  # Copy real font bytes into the image: aggregate-store statfs can stall.
+  # Keep packages separately named, so identically named font files cannot collide.
+  guestFontPackages = lib.unique ([ pkgs.dejavu_fonts pkgs.dejavu_fonts.minimal ] ++ cfg.fontPackages);
+  guestFontPath = p: "/usr/share/mbox-fonts/${builtins.baseNameOf (toString p)}";
   guestFontsBase = pkgs.makeFontsConf {
-    fontDirectories = [ pkgs.dejavu_fonts ];
+    fontDirectories = guestFontPackages;
     impureFontDirectories = [];
-    includes = [];
+    # Restore fontconfig's rendering/substitution rules, not just font discovery.
+    includes = [ "${pkgs.fontconfig.out}/etc/fonts/conf.d" ] ++ cfg.fontConfigIncludes;
   };
   # Fontconfig probes font directories with statfs even when caches exist.
   # Built-in image carries real font bytes on its local root, not store symlinks.
   # Custom images retain the immutable store fallback through guestFontsBase.
   guestFontsConf = pkgs.runCommand "mbox-fonts-local.conf" {} ''
-    substitute ${guestFontsBase} $out \
-      --replace-fail '${pkgs.dejavu_fonts.minimal}' '/usr/share/mbox-fonts' \
-      --replace-fail '${pkgs.dejavu_fonts}' '/usr/share/mbox-fonts'
+    substitute ${guestFontsBase} $out ${lib.concatMapStringsSep " " (p:
+      "--replace-fail ${lib.escapeShellArg (toString p)} ${lib.escapeShellArg (guestFontPath p)}"
+    ) guestFontPackages}
   '';
 
   # A microVM needs a filesystem to mount as / before anything can run, which is the
@@ -116,8 +120,10 @@ let
         # NSS/p11-kit reads this standard path; SSL_CERT_FILE alone is not enough.
         "mkdir -p ./etc/ssl/certs"
         "ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt ./etc/ssl/certs/ca-certificates.crt"
-        "mkdir -p ./usr/share/mbox-fonts"
-        "cp -rL ${pkgs.dejavu_fonts}/share/fonts/. ./usr/share/mbox-fonts/"
+        (lib.concatMapStringsSep "\n" (p: ''
+          mkdir -p .${guestFontPath p}
+          cp -rL ${p}/share/fonts/. .${guestFontPath p}/
+        '') guestFontPackages)
         "mkdir -p ./etc/fonts"
         "ln -s ${guestFontsConf} ./etc/fonts/fonts.conf"
         "printf 'root:x:0:0:root:/root:/bin/sh\\n' > ./etc/passwd"
@@ -309,9 +315,33 @@ let
     [ "${pkgs.wl-clipboard}/bin/wl-paste" "${pkgs.wl-clipboard}/bin/wl-copy" "${clipboardKey}/bin/mbox-clipboard-key" ]
     (builtins.readFile ../../programs/mbox/clipboard-guest.sh.in));
 
+  # Guest-only: preserve the parent's keymap and consume host IME commits.
+  # The host still exposes only the application-side text-input protocol.
+  nestedWlroots = pkgs.wlroots_0_20.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [ ../../patches/mbox-wlroots-input.patch ];
+    postPatch = (old.postPatch or "") + ''
+      cp ${../../programs/mbox/nested-input.c} backend/wayland/nested-input.c
+      cp ${../../tests/mbox-nested-input.c} mbox-nested-input-test.c
+      substituteInPlace mbox-nested-input-test.c \
+        --replace-fail '../programs/mbox/nested-input.c' 'backend/wayland/nested-input.c'
+    '';
+    doCheck = true;
+    postCheck = (old.postCheck or "") + ''
+      $CC -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+        -I../include -Iinclude -I.. -Iprotocol -I../protocol \
+        $(pkg-config --cflags wayland-client wayland-server xkbcommon pixman-1 libdrm) \
+        ../mbox-nested-input-test.c protocol/text-input-unstable-v3-protocol.c \
+        -L. -lwlroots-0.20 \
+        $(pkg-config --libs wayland-client wayland-server xkbcommon) \
+        -o mbox-nested-input-test
+      LD_LIBRARY_PATH="$PWD:''${LD_LIBRARY_PATH:-}" ./mbox-nested-input-test
+    '';
+  });
+  nestedSway = pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; };
+
   clipboardDesktop = pkgs.writeShellScript "mbox-clipboard-desktop" (builtins.replaceStrings
     [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" ]
-    [ "${pkgs.sway-unwrapped}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" ]
+    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" ]
     (builtins.readFile ../../programs/mbox/clipboard-desktop.sh.in));
 
   clipboardSource = pkgs.writeText "mbox-clipboard.py" (builtins.replaceStrings
@@ -338,6 +368,11 @@ let
         fi ;;
       *) exec ${pkgs.python3}/bin/python3 ${clipboardSource} "$@" ;;
     esac
+  '';
+
+  audioHost = pkgs.writeShellScript "mbox-audio-host" ''
+    exec ${pkgs.python3}/bin/python3 ${../../programs/mbox/audio-host.py} \
+      ${pkgs.pulseaudio}/bin/pulseaudio ${pkgs.pulseaudio}/bin/pactl "$@"
   '';
 
   desktopGuest = pkgs.writeShellScript "mbox-desktop-guest" (builtins.replaceStrings
@@ -391,6 +426,7 @@ let
       "@@DESKTOP_GUEST@@"
       "@@CLIPBOARD@@"
       "@@CLIPBOARD_DESKTOP@@"
+      "@@AUDIO_HOST@@"
       "@@CAMERA_HOST@@"
       "@@CAMERA_GUEST@@"
       "@@FONT_MOUNTS@@"
@@ -432,6 +468,7 @@ let
       "${desktopGuest}"
       "${clipboard}/bin/mbox-clipboard"
       "${clipboardDesktop}"
+      "${audioHost}"
       "${cameraHost}"
       "${cameraGuest}"
       "${fontMounts}"
@@ -467,6 +504,18 @@ in
   options.programs.mbox = {
     clipboardPackage = lib.mkOption { type = lib.types.package; readOnly = true; description = "Explicit Sway clipboard broker."; };
     enable = lib.mkEnableOption "Monkeybox host installation through the optional NixOS adapter";
+
+    fontPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.package;
+      default = with pkgs; [ noto-fonts noto-fonts-cjk-sans noto-fonts-color-emoji ];
+      description = "Fonts copied into the guest image, in addition to DejaVu. No host home is shared.";
+    };
+
+    fontConfigIncludes = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [];
+      description = "Immutable fontconfig rendering/family rules; must not reference host-only font/cache directories.";
+    };
 
     guestFontMounts = lib.mkOption {
       type = lib.types.listOf (lib.types.strMatching "/nix/store/[^:\n]+/.+");

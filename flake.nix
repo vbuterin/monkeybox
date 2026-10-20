@@ -51,6 +51,7 @@
       python3 tests/mbox-network.py --assembly-only
       python3 tests/mbox-camera-host.py
       python3 tests/mbox-options.py
+      python3 tests/mbox-audio.py
       python3 tests/mbox-file-mounts.py
       python3 tests/mbox-home-project.py
       # xattr metadata tests require a host filesystem supporting user xattrs;

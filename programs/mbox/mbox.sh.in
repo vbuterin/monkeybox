@@ -101,9 +101,11 @@ Options:
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
   -v, --visual             Software Wayland + guest-local Xwayland (filtered compositor access)
   -c, --clipboard          Opt-in nested desktop with explicit host text transfers (requires -v)
-  -a, --audio              Experimental Pulse streaming (may include recording/monitoring)
+  -a, --audio              Audio output (no host microphone or host-output monitoring)
+  -r, --microphone         Microphone input (independent of audio output)
       --no-visual           Disable Wayland/Xwayland bridge (default)
-      --no-audio            Disable audio bridge (default)
+      --no-audio            Disable audio output (default)
+      --no-microphone       Disable microphone input (default)
                            Short options may be clustered; only the last may take values.
                            E.g. -aif PATH -m 15000 or -af PATH -im 15000.
   -C, --nix-cache PATH     Export an existing store output closure read-only (repeatable);
@@ -161,6 +163,7 @@ CAMERA=0
 CAMERA_DEVICE=/dev/video0
 WAYLAND=0
 AUDIO=0
+MICROPHONE=0
 HOST_LOOPBACK=0
 PROJECT_DIR=""
 declare -a EXPOSE=(@@EXPOSE_TCP@@) EXTRA_PERSIST=() EXTRA_MOUNTS=() EXTRA_ENV=()
@@ -178,7 +181,7 @@ while [ $# -gt 0 ]; do
         for ((i=0; i<${#cluster}; i++)); do
             letter="${cluster:i:1}"
             case "$letter" in
-                a|v|i|c|l|h) ;;
+                a|r|v|i|c|l|h) ;;
                 p|n|P|f|e|C|m)
                     if [ "$i" -ne "$((${#cluster}-1))" ]; then
                         echo "mbox: -$letter takes arguments and must be last in '$1'" >&2
@@ -234,6 +237,7 @@ while [ $# -gt 0 ]; do
         -v | --visual) WAYLAND=1; shift ;;
         -i | --internet) NET_MODE=open; shift ;;
         -a | --audio) AUDIO=1; shift ;;
+        -r | --microphone) MICROPHONE=1; shift ;;
         -l | --camera) CAMERA=1; shift ;;
         --camera-device) CAMERA_DEVICE="$2"; shift 2 ;;
         --no-camera) CAMERA=0; shift ;;
@@ -241,6 +245,7 @@ while [ $# -gt 0 ]; do
         --no-visual) WAYLAND=0; shift ;;
         --no-internet) NET_MODE=blocked; shift ;;
         --no-audio) AUDIO=0; shift ;;
+        --no-microphone) MICROPHONE=0; shift ;;
         --ephemeral) EPHEMERAL=1; shift ;;
         --fresh) FRESH=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -311,6 +316,8 @@ DESKTOP_RUNTIME=""
 WAYPIPE_PID=""
 CAMERA_PID=""
 CAMERA_RUNTIME=""
+AUDIO_RUNTIME=""
+AUDIO_PID=""
 RUN_PID=""
 cancel_run() {
     trap '' INT TERM
@@ -332,6 +339,11 @@ cancel_run() {
     exit "$1"
 }
 cleanup_desktop() {
+    if [ -n "$AUDIO_PID" ]; then
+        kill "$AUDIO_PID" 2>/dev/null || true
+        wait "$AUDIO_PID" 2>/dev/null || true
+    fi
+    [ -z "$AUDIO_RUNTIME" ] || rm -rf -- "$AUDIO_RUNTIME"
     if [ -n "$CAMERA_PID" ]; then
         kill "$CAMERA_PID" 2>/dev/null || true
         for ((i=0; i<40; i++)); do
@@ -709,7 +721,7 @@ if [ "$WAYLAND" = 1 ]; then
     fi
     DESKTOP_ARGS+=(--vsock "$waypipe_socket:5001")
 fi
-if [ "$AUDIO" = 1 ]; then
+if [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
     # The vsock bridge transports one local Unix stream, not Pulse's TCP,
     # server-list or discovery syntax. Never silently fall back from an override.
     case "${PULSE_SERVER:-}" in
@@ -722,7 +734,20 @@ if [ "$AUDIO" = 1 ]; then
         *:*|*';'*|*$'\n'*) echo 'mbox: unsupported Pulse socket path syntax' >&2; exit 2 ;;
     esac
     [ -S "$pulse_socket" ] || { echo 'mbox: selected Pulse socket is unavailable' >&2; exit 2; }
-    DESKTOP_ARGS+=(--vsock "$pulse_socket:5002")
+    AUDIO_RUNTIME=$(mktemp -d /tmp/mbox-audio.XXXXXXXX)
+    chmod 700 "$AUDIO_RUNTIME"
+    if [ "$DRY_RUN" != 1 ]; then
+        @@AUDIO_HOST@@ "unix:$pulse_socket" "$AUDIO" "$MICROPHONE" "$AUDIO_RUNTIME" &
+        AUDIO_PID=$!
+        for ((i=0; i<250; i++)); do
+            [ -S "$AUDIO_RUNTIME/pulse" ] && break
+            kill -0 "$AUDIO_PID" 2>/dev/null || { echo 'mbox: audio isolation server failed' >&2; exit 1; }
+            sleep .02
+        done
+        [ -S "$AUDIO_RUNTIME/pulse" ] || { echo 'mbox: audio isolation server timed out' >&2; exit 1; }
+    fi
+    # Only this fixed-capability server is reachable, never the host native socket.
+    DESKTOP_ARGS+=(--vsock "$AUDIO_RUNTIME/pulse:5002")
 fi
 
 BASE_ARGS=(
@@ -759,11 +784,13 @@ while IFS= read -r -d '' a; do INNER+=("$a"); done < <(inner_command "${CMD[@]}"
 if [ "$CAMERA" = 1 ]; then
     INNER=("@@CAMERA_GUEST@@" "${INNER[@]}")
 fi
-if [ "$WAYLAND" = 1 ] || [ "$AUDIO" = 1 ]; then
+if [ "$WAYLAND" = 1 ] || [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
     if [ "$CLIPBOARD" = 1 ]; then
         INNER=("@@CLIPBOARD_DESKTOP@@" "${INNER[@]}")
     fi
-    INNER=("@@DESKTOP_GUEST@@" "$WAYLAND" "$AUDIO" "${INNER[@]}")
+    AUDIO_BRIDGE=0
+    if [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then AUDIO_BRIDGE=1; fi
+    INNER=("@@DESKTOP_GUEST@@" "$WAYLAND" "$AUDIO_BRIDGE" "${INNER[@]}")
 fi
 
 if [ "$HOST_LOOPBACK" = 1 ]; then

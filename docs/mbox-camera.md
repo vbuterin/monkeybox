@@ -17,7 +17,7 @@ by mbox. The website still requests camera permission normally. The available
 camera is named **Mbox camera**. Initial format is fixed **320×240 at 25 fps**.
 This is low-resolution experimental support, not a high-quality-call claim.
 
-`-a` grants audio separately, including recording; `-l` does not grant a microphone.
+`-a` grants playback and `-r` grants microphone input independently; `-l` does not grant a microphone.
 Bluetooth `-b` is deferred: connected headsets use `-a`, keyboards/mice use normal
 focused visual input. The user has now confirmed **Firefox camera access works with their camera**.
 Signal/Electron compatibility is still unverified. No physical camera was opened or live video recorded by

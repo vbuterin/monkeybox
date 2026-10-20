@@ -14,7 +14,7 @@
 +        b"wl_seat" | b"xdg_wm_base" | b"wp_viewporter" | b"wp_presentation" |
 +        b"wp_fractional_scale_manager_v1" | b"zxdg_output_manager_v1" |
 +        b"zxdg_decoration_manager_v1" | b"zwp_pointer_gestures_v1" |
-+        b"zwp_relative_pointer_manager_v1" | b"zwp_pointer_constraints_v1")
++        b"zwp_relative_pointer_manager_v1" | b"zwp_pointer_constraints_v1" | b"zwp_text_input_manager_v3")
 +}
 +
  struct ObjWlRegistry {

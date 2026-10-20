@@ -1,0 +1,31 @@
+--- a/backend/wayland/seat.c
++++ b/backend/wayland/seat.c
+@@ -17,8 +17,10 @@
+ 
+ #include "backend/wayland.h"
+ #include "util/time.h"
++#include "nested-input.c"
+ 
+ static void keyboard_handle_keymap(void *data, struct wl_keyboard *wl_keyboard,
+ 		uint32_t format, int32_t fd, uint32_t size) {
++	mbox_keymap(data, format, fd, size);
+ 	close(fd);
+ }
+@@ -108,6 +110,7 @@
+ 
+ 	wl_signal_emit_mutable(&seat->backend->backend.events.new_input,
+ 		&seat->wlr_keyboard.base);
++	mbox_input_init(seat);
+ }
+ 
+ static void touch_coordinates_to_absolute(struct wlr_wl_seat *seat,
+--- a/backend/wayland/meson.build
++++ b/backend/wayland/meson.build
+@@ -21,6 +21,7 @@
+ 	'presentation-time',
+ 	'relative-pointer-unstable-v1',
+ 	'tablet-v2',
++	'text-input-unstable-v3',
+ 	'viewporter',
+ 	'xdg-activation-v1',
+ 	'xdg-decoration-unstable-v1',

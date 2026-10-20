@@ -104,4 +104,15 @@ with tempfile.TemporaryDirectory() as tmp:
     assert b'not-pdf.png' not in result
     assert (b'FILE='+str(Path(tmp,'one.pdf')).encode()+b'\0') in result
     assert (b'FILE='+str(Path(tmp,'two spaced.pdf')).encode()+b'\0') in result
-print('PASS: general short clusters, variadic file grants/globs, option/command boundaries and invalid/missing arguments')
+audio_parser = parser + '\nprintf "AUDIO=%s MIC=%s" "$AUDIO" "$MICROPHONE"'
+for args, expected in (
+    ([], b'AUDIO=0 MIC=0'), (['-a'], b'AUDIO=1 MIC=0'),
+    (['-r'], b'AUDIO=0 MIC=1'), (['--microphone'], b'AUDIO=0 MIC=1'),
+    (['-varicl'], b'AUDIO=1 MIC=1'),
+    (['-ar', '--no-audio'], b'AUDIO=0 MIC=1'),
+    (['-ar', '--no-microphone'], b'AUDIO=1 MIC=0'),
+    (['-r', '--no-microphone', '-a'], b'AUDIO=1 MIC=0'),
+    (['--', 'echo', '-r'], b'AUDIO=0 MIC=0'),
+):
+    assert subprocess.check_output(['bash', '-eu', '-c', audio_parser, 'test', *args]).endswith(expected)
+print('PASS: general short clusters, independent audio/microphone flags, variadic file grants/globs, option/command boundaries and invalid/missing arguments')

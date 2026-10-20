@@ -59,7 +59,8 @@ Choose a small project directory rather than a directory full of sensitive files
 | `-i` | Public internet egress |
 | `-p PORT` | Guest access to one host TCP service; not guest port publication |
 | `-v` | Software Wayland window/input bridge |
-| `-a` | Audio, **including recording/monitoring** |
+| `-a` | Audio output only (guest may monitor its own playback) |
+| `-r` | Microphone input, independent of `-a` |
 | `-c` | Guest-local desktop plus explicit Sway clipboard transfers; requires `-v` |
 | `-l` | Selected host camera stream for invocation lifetime |
 | `-C STORE_PATH` | Export realized closure to a temporary read-only offline Nix cache |
