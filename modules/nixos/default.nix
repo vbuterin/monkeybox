@@ -7,6 +7,8 @@
     # Grant selected users KVM access through their normal group membership.
     # Never make KVM world writable as a side effect of installing this module.
     users.groups.kvm = {};
-    services.udev.extraRules = ''KERNEL=="kvm", GROUP="kvm", MODE="0660"'';
+    services.udev.extraRules = ''
+      KERNEL=="kvm", GROUP="kvm", MODE="0660"
+    '';
   };
 }

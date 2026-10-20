@@ -1,0 +1,230 @@
+TEST_TOOL waypipe: /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe
+TEST_TOOL wtype: /nix/store/cwzg3yii4xv6hk1yn3jjgw14cxzy98qa-wtype-0.4/bin/wtype
+TEST_TOOL sway-unwrapped: /nix/store/jh2y4bkbdd6a0dkpw6ryz0j8cgy6hg7k-sway-unwrapped-1.12/bin/sway
+TEST_TOOL pulseaudio: /nix/store/6xxzz43g6ap7hmrpwqb2r8aa0fqdgjhk-pulseaudio-17.0/bin/pulseaudio
+TEST_TOOL weston: /nix/store/b78hmfrnpc8f285lxgw0kdc1gjj6bv13-weston-16.0.0/bin/weston-presentation-shm
+START set -e; test -z "${WAYLAND_DISPLAY:-}"; test -z "${PULSE_SERVER:-}"; echo HEADLESS_OK (budget 30s)
+ELAPSED set -e; test -z "${WAYLAND_DISPLAY:-}"; test -z "${PULSE_SERVER:-}"; echo HEADLESS_OK: 0.905s
+HEADLESS_OK
+
+START set -e; echo private > "$HOME/.npm-global/bin/fixture"; echo NPM_WRITE_OK (budget 30s)
+ELAPSED set -e; echo private > "$HOME/.npm-global/bin/fixture"; echo NPM_WRITE_OK: 0.586s
+NPM_WRITE_OK
+
+START set -e; grep -q private "$HOME/.npm-global/bin/fixture"; echo NPM_PERSIST_OK (budget 30s)
+ELAPSED set -e; grep -q private "$HOME/.npm-global/bin/fixture"; echo NPM_PERSIST_OK: 0.590s
+NPM_PERSIST_OK
+
+START set -e (budget 30s)
+ELAPSED set -e: 3.395s
+Creating config file: /tmp/mbox-runtime-j9r_zjsz/home/.mplayer/config
+MPlayer 1.5-unstable-2024-12-21-15.3.0 (C) 2000-2024 MPlayer Team
+
+Playing tone.wav.
+libavformat version 61.7.103 (external)
+Audio only file format detected.
+Load subtitles in ./
+==========================================================================
+Opening audio decoder: [pcm] Uncompressed PCM audio decoder
+AUDIO: 44100 Hz, 1 ch, s16le, 705.6 kbit/100.00% (ratio: 88200->88200)
+Selected audio codec: [pcm] afm: pcm (Uncompressed PCM)
+==========================================================================
+AO: [alsa] 44100Hz 1ch s16le (2 bytes per sample)
+Video: no video
+Starting playback...
+A:   0.0 (00.0) of 1.0 (01.0) ??,?%
+A:   0.0 (00.0) of 1.0 (01.0) ??,?%
+A:   0.0 (00.0) of 1.0 (01.0)  0.0%
+A:   0.1 (00.1) of 1.0 (01.0)  0.0%
+A:   0.2 (00.1) of 1.0 (01.0)  0.0%
+A:   0.2 (00.2) of 1.0 (01.0)  0.0%
+A:   0.3 (00.2) of 1.0 (01.0)  0.0%
+A:   0.3 (00.3) of 1.0 (01.0)  0.0%
+A:   0.4 (00.4) of 1.0 (01.0)  0.0%
+A:   0.5 (00.4) of 1.0 (01.0)  0.0%
+A:   0.5 (00.5) of 1.0 (01.0)  0.0%
+A:   0.6 (00.5) of 1.0 (01.0)  0.0%
+
+
+Exiting... (End of file)
+2026/10/20 08:27:35 socat[536] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:36 socat[539] W open("/dev/vsock", ...): Permission denied
+
+Audio device got stuck!
+2026/10/20 08:27:38 socat[530] W exiting on signal 15
+
+MPLAYER_ALSA_PULSE_OK
+START pactl list short sinks (budget 30s)
+ELAPSED pactl list short sinks: 0.928s
+0	mbox_fixture	module-null-sink.c	s16le 2ch 44100Hz	IDLE
+2026/10/20 08:27:39 socat[536] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:39 socat[532] W exiting on signal 15
+
+START pactl list short sinks (budget 30s)
+ELAPSED pactl list short sinks: 0.904s
+0	mbox_fixture	module-null-sink.c	s16le 2ch 44100Hz	IDLE
+2026/10/20 08:27:40 socat[535] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:40 socat[531] W exiting on signal 15
+
+START pactl list short sinks (budget 30s)
+ELAPSED pactl list short sinks: 0.722s
+0	mbox_fixture	module-null-sink.c	s16le 2ch 44100Hz	IDLE
+2026/10/20 08:27:41 socat[535] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:41 socat[531] W exiting on signal 15
+
+PULSE_SERVER_OVERRIDE_OK
+START set -e; wayland-info; pactl info; pactl list short sinks; head -c 19200 /dev/zero | pacat  (budget 30s)
+ELAPSED set -e; wayland-info; pactl info; pactl list short sinks; head -c 19200 /dev/zero | pacat : 3.089s
+interface: 'wl_shm',                                     version:  2, name:  2
+	formats (fourcc):
+	0x38344241 = 'AB48'
+	0x30334258 = 'XB30'
+	0x30334241 = 'AB30'
+	0x30335258 = 'XR30'
+	0x30335241 = 'AR30'
+	0x36314742 = 'BG16'
+	0x36314752 = 'RG16'
+	0x34325842 = 'BX24'
+	0x34324142 = 'BA24'
+	0x34325852 = 'RX24'
+	0x34324152 = 'RA24'
+	0x34324241 = 'AB24'
+	         1 = 'XR24'
+	0x34324258 = 'XB24'
+	         0 = 'AR24'
+interface: 'wl_compositor',                              version:  6, name:  3
+interface: 'wl_subcompositor',                           version:  1, name:  4
+interface: 'zxdg_output_manager_v1',                     version:  3, name:  7
+	xdg_output_v1
+		output: 56
+		name: 'HEADLESS-1'
+		description: 'Headless output 1'
+		logical_x: 0, logical_y: 0
+		logical_width: 800, logical_height: 600
+interface: 'xdg_wm_base',                                version:  5, name: 11
+interface: 'zxdg_decoration_manager_v1',                 version:  1, name: 14
+interface: 'zwp_relative_pointer_manager_v1',            version:  1, name: 15
+interface: 'zwp_pointer_constraints_v1',                 version:  1, name: 16
+interface: 'wp_presentation',                            version:  2, name: 17
+	presentation clock id: 1 (CLOCK_MONOTONIC)
+interface: 'wp_viewporter',                              version:  1, name: 34
+interface: 'wp_fractional_scale_manager_v1',             version:  1, name: 37
+interface: 'zwp_pointer_gestures_v1',                    version:  3, name: 51
+interface: 'wl_seat',                                    version:  9, name: 53
+	name: seat0
+	capabilities:
+interface: 'wl_output',                                  version:  4, name: 56
+	name: HEADLESS-1
+	description: Headless output 1
+	x: 0, y: 0, scale: 1,
+	physical_width: 0 mm, physical_height: 0 mm,
+	make: 'Unknown', model: 'Unknown',
+	subpixel_orientation: unknown, output_transform: normal,
+	mode:
+		width: 800 px, height: 600 px, refresh: 0.000 Hz,
+		flags: current
+Server String: unix:/tmp/mbox-desktop.qOJkHf8i/pulse
+Library Protocol Version: 35
+Server Protocol Version: 35
+Is Local: yes
+Client Index: 5
+Tile Size: 65472
+User Name: v
+Host Name: v-amd
+Server Name: pulseaudio
+Server Version: 17.0
+Default Sample Specification: s16le 2ch 44100Hz
+Default Channel Map: front-left,front-right
+Default Sink: mbox_fixture
+Default Source: mbox_fixture.monitor
+Cookie: c886:e83f
+0	mbox_fixture	module-null-sink.c	s16le 2ch 44100Hz	IDLE
+DESKTOP_OK
+2026/10/20 08:27:41 socat[541] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:41 socat[543] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:41 socat[546] W open("/dev/vsock", ...): Permission denied
+2026/10/20 08:27:43 socat[531] W exiting on signal 15
+
+START python3 registry.py (budget 30s)
+ELAPSED python3 registry.py: 1.234s
+{"wl_shm": [2, 2], "wl_compositor": [3, 6], "wl_subcompositor": [4, 1], "zxdg_output_manager_v1": [7, 3], "xdg_wm_base": [11, 5], "zxdg_decoration_manager_v1": [14, 1], "zwp_relative_pointer_manager_v1": [15, 1], "zwp_pointer_constraints_v1": [16, 1], "wp_presentation": [17, 2], "wp_viewporter": [34, 1], "wp_fractional_scale_manager_v1": [37, 1], "zwp_pointer_gestures_v1": [51, 3], "wl_seat": [53, 9], "wl_output": [56, 4]}
+
+START /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock -- (budget 30s)
+ELAPSED /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock --: 1.262s
+[66.455922 ERR waypipe-client(241596) mainloop.rs:5773] Sending error: src/tracking.rs:4252: mbox: forbidden or unadvertised global bind
+FORBIDDEN_BIND_REJECTED
+
+START /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock -- (budget 30s)
+ELAPSED /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock --: 1.186s
+[67.677300 ERR waypipe-client(241695) mainloop.rs:5773] Sending error: src/tracking.rs:4252: mbox: forbidden or unadvertised global bind
+FORBIDDEN_BIND_REJECTED
+
+START /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock -- (budget 30s)
+ELAPSED /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock --: 1.049s
+[68.733786 ERR waypipe-client(241794) mainloop.rs:5773] Sending error: src/tracking.rs:4252: mbox: forbidden or unadvertised global bind
+FORBIDDEN_BIND_REJECTED
+
+UNFILTERED_VERSION_ZERO_REJECTED
+START /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock -- (budget 30s)
+ELAPSED /nix/store/8bh0c0yx0rclaq8331qsi1la536dq59y-waypipe-0.11.0/bin/waypipe --no-gpu --vsock --: 0.988s
+[69.770791 ERR waypipe-client(241895) mainloop.rs:5773] Sending error: src/tracking.rs:4252: mbox: forbidden or unadvertised global bind
+FORBIDDEN_BIND_REJECTED
+
+FILTERED_VERSION_ZERO_REJECTED: explicit version >= 1 required
+WAYLAND_GLOBAL_ALLOWLIST_OK: exact registry and hostile binds
+START WAYLAND_DEBUG=1 timeout 3 /nix/store/b78hmfrnpc8f285lxgw0kdc1gjj6bv13-weston-16.0.0/bin/we (budget 30s)
+ELAPSED WAYLAND_DEBUG=1 timeout 3 /nix/store/b78hmfrnpc8f285lxgw0kdc1gjj6bv13-weston-16.0.0/bin/we: 3.979s
+SHM_RENDER_FRAMES_OK: real shared-memory buffer transfer and frame callbacks
+START fontconfig match (budget 150s)
+ELAPSED fontconfig match: 0.827s
+FONT_MATCH_OK: /usr/share/mbox-fonts/truetype/DejaVuMathTeXGyre.ttf
+
+START set -e (budget 30s)
+ELAPSED set -e: 1.655s
+FEH_XWAYLAND_OK: mapped PNG, Wayland SHM commits, guest-only X11 without TCP
+START keyboard/keymap and teardown (budget 150s)
+ELAPSED keyboard/keymap and teardown: 5.148s
+[08:27:57.929603] {Default Queue}  -> wl_seat#11.get_keyboard(new id wl_keyboard#13)
+[08:27:57.940765] {Default Queue} wl_keyboard#13.keymap(1, fd 8, 1434)
+KEYBOARD_KEYMAP_OK: real wl_seat keyboard and keymap FD through waypipe
+START set -e; test -z "${WAYLAND_DISPLAY:-}"; test -z "${PULSE_SERVER:-}"; test -z "${DISPLAY:-} (budget 30s)
+ELAPSED set -e; test -z "${WAYLAND_DISPLAY:-}"; test -z "${PULSE_SERVER:-}"; test -z "${DISPLAY:-}: 0.774s
+HEADLESS_AGAIN_OK
+
+START python3 - <<'PY' (budget 30s)
+ELAPSED python3 - <<'PY': 0.843s
+NARROW_HOST_PORT_OK
+
+START python3 - <<'PY' (budget 30s)
+ELAPSED python3 - <<'PY': 0.766s
+NARROW_HOST_PORT_OK
+
+PASS: real mbox boot, Wayland SHM frames, null-sink audio playback, headless reset, narrow host ports
+--- sway fixture log ---
+2026-10-20 08:27:32 - [main.c:328] Could not find config for output HEADLESS-1 ((null))
+
+--- pulse fixture log ---
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [pulseaudio] core-util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+W: [pulseaudio] authkey.c: Failed to open cookie file '/tmp/mbox-runtime-j9r_zjsz/home/.config/pulse/cookie': No such file or directory
+W: [pulseaudio] authkey.c: Failed to load authentication key '/tmp/mbox-runtime-j9r_zjsz/home/.config/pulse/cookie': No such file or directory
+W: [pulseaudio] authkey.c: Failed to open cookie file '/tmp/mbox-runtime-j9r_zjsz/home/.pulse-cookie': No such file or directory
+W: [pulseaudio] authkey.c: Failed to load authentication key '/tmp/mbox-runtime-j9r_zjsz/home/.pulse-cookie': No such file or directory
+E: [null-sink] util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [null-sink] util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [null-sink] util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [null-sink] util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+E: [null-sink] util.c: Failed to connect to system bus: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-system-bus: No such file or directory
+W: [pulseaudio] server-lookup.c: Unable to contact D-Bus: org.freedesktop.DBus.Error.FileNotFound: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-session-bus: No such file or directory
+W: [pulseaudio] main.c: Unable to contact D-Bus: org.freedesktop.DBus.Error.FileNotFound: Failed to connect to socket /tmp/mbox-runtime-j9r_zjsz/no-session-bus: No such file or directory
+
+--- keyboard fixture log ---

@@ -102,13 +102,15 @@ let
   # in the image's own /etc/passwd and refuses to boot without it ("failed to resolve
   # guest uid 0"), and git, python and anything calling getpwuid ask the same file. Only
   # a root line is needed, because the guest runs as root and the mounts translate
-  # ownership on the way out. extraCommands rather than copyToRoot, because buildImage
-  # refuses to take contents and copyToRoot together.
+  # ownership on the way out. copyToRoot supplies the package tree; extraCommands
+  # adds the guest-specific account, certificate and font files.
   baseImage = pkgs.runCommand "mbox-base.tar" { nativeBuildInputs = [ pkgs.gzip ]; } ''
     gunzip -c ${pkgs.dockerTools.buildImage {
       name = "mbox-base";
       tag = "latest";
-      contents = [ pkgs.busybox pkgs.bashInteractive ];
+      # Same package trees as the former contents argument. In this pinned
+      # dockerTools buildImage both resolve to rootContents, preserving layout.
+      copyToRoot = [ pkgs.busybox pkgs.bashInteractive ];
       config = { Env = [ "PATH=/bin" ]; };
       extraCommands = lib.concatStringsSep "\n" [
         # NSS/p11-kit reads this standard path; SSL_CERT_FILE alone is not enough.
@@ -122,7 +124,7 @@ let
         "printf 'root:x:0:\\n' > ./etc/group"
         "printf 'passwd: files\\ngroup: files\\n' > ./etc/nsswitch.conf"
         # No link is created for /bin/bash: buildImage already links each entry of
-        # `contents` into the image root, which is what puts bash and sh there (measured —
+        # `copyToRoot` into the image root, which is what puts bash and sh there (measured —
         # attempting the link by hand reports "File exists", then "Permission denied",
         # because the root is read-only by the time extraCommands run). guestShell names
         # that file, so if this list ever stops carrying bashInteractive, the guest loses

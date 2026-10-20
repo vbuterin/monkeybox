@@ -40,7 +40,16 @@
     checks.${system}.policy = pkgs.runCommand "monkeybox-policy-tests" {
       nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils ];
     } ''
-      cp -r ${self} source; chmod -R u+w source; cd source
+      cp -r ${pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = pkgs.lib.fileset.difference
+          (pkgs.lib.fileset.unions [ ./tests ./programs ./modules ./packages ./patches ])
+          ./tests/evidence;
+      }} source; chmod -R u+w source; cd source
+      python3 tests/mbox-source-package.py
+      python3 tests/mbox-test-tools.py
+      python3 tests/mbox-network.py --assembly-only
+      python3 tests/mbox-camera-host.py
       python3 tests/mbox-options.py
       python3 tests/mbox-file-mounts.py
       python3 tests/mbox-home-project.py

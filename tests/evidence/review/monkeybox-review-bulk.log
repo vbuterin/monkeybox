@@ -1,0 +1,11 @@
+{"bytes": 4096, "acked_4k": false, "received": 4096, "exact_bytes": true, "guest_exit": 0, "host_errors": [], "passed": true}
+BULK_DIGEST_OK
+{"bytes": 65536, "acked_4k": false, "received": 65536, "exact_bytes": true, "guest_exit": 0, "host_errors": [], "passed": true}
+BULK_DIGEST_OK
+{"bytes": 1048576, "acked_4k": false, "received": 1048576, "exact_bytes": true, "guest_exit": 0, "host_errors": [], "passed": true}
+BULK_DIGEST_OK
+{"bytes": 16777216, "acked_4k": false, "received": 16777216, "exact_bytes": true, "guest_exit": 0, "host_errors": [], "passed": true}
+BULK_DIGEST_OK
+{"bytes": 1048576, "acked_4k": true, "received": 1048576, "exact_bytes": true, "guest_exit": 0, "host_errors": [], "passed": true}
+BULK_DIGEST_OK
+VSOCK_BULK_INTEGRITY_OK

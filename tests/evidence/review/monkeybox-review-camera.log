@@ -1,0 +1,16 @@
+TEST_TOOL pipewire.out: /nix/store/rvgcqlnpq9lv4vbq85zvv51bkk4izpbl-pipewire-1.6.8/bin/pipewire
+TEST_TOOL wireplumber.out: /nix/store/iw25pcr0ry2m8v14d5phlfdczi4h88my-wireplumber-0.5.17/bin/wireplumber
+TEST_TOOL dbus.out: /nix/store/zjslpcn77sh4qwm0jwv5xil8jwacckdi-dbus-1.16.2/bin/dbus-daemon
+TEST_TOOL firefox: /nix/store/6zzf1yls8bhg0avllbh63vvygbhlw8f3-firefox-156.0.1/bin/firefox
+TEST_TOOL python3.withPackages (p: [ p.dbus-next ]): /nix/store/vmp84m72hgg4gjwbrgrcvw3gr9pqiznv-python3-3.14.7-env/bin/python3
+PRODUCTION_CAMERA_RESULT {"ok": true, "width": 320, "height": 240, "top": [254, 1, 1, 255], "bottom": [0, 254, 1, 255], "label": "Mbox camera"}
+
+W 08:28:25.619905             mod.rt ../src/modules/module-rt.c:331:translate_error: RTKit error: org.freedesktop.DBus.Error.UnknownMethod
+W 08:28:25.620065             mod.rt ../src/modules/module-rt.c:995:do_rtkit_setup: RTKit does not give us MaxRealtimePriority, using 1
+W 08:28:25.620381             mod.rt ../src/modules/module-rt.c:331:translate_error: RTKit error: org.freedesktop.DBus.Error.UnknownMethod
+W 08:28:25.620387             mod.rt ../src/modules/module-rt.c:1000:do_rtkit_setup: RTKit does not give us MinNiceLevel, using 0
+W 08:28:25.621075             mod.rt ../src/modules/module-rt.c:331:translate_error: RTKit error: org.freedesktop.DBus.Error.UnknownMethod
+W 08:28:25.621278             mod.rt ../src/modules/module-rt.c:1005:do_rtkit_setup: RTKit does not give us RTTimeUSecMax, using -1
+N 08:28:25.657424 wp-internal-comp-l ../lib/wp/private/internal-comp-loader.c:589:on_component_loaded: <WpCore:0x55904fd8c860> optional component 'support.system-dbus [module: libwireplumber-module-dbus-connection]' failed to load: Failed to connect to bus: Could not connect: No such file or directory
+N 08:28:25.657445 wp-internal-comp-l ../lib/wp/private/internal-comp-loader.c:641:wp_component_array_load_task_execute_step: <WpCore:0x55904fd8c860> skipping component 'support.modem-manager [module: libwireplumber-module-modem-manager]' because some of its dependencies were not loaded
+N 08:28:25.657449 wp-internal-comp-l ../lib/wp/private/internal-comp-loader.c:641:wp_component_array_load_task_execute_step: <WpCore:0x55904fd8c860> skipping component 'hooks.device.profile.find-voice-call [script/lua: device/find-voice-call-profile.lua]' because some of its dependencies were not loaded

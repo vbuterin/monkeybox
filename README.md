@@ -105,7 +105,17 @@ no automatic venv setup, Pi credentials or host home migration is performed.
 ## Optional NixOS adapter
 
 Import `monkeybox.nixosModules.default`, enable `programs.mbox`, and select packages
-through the same options. Add only intended users to the `kvm` group. The adapter
+through the same options. Add only intended users to the `kvm` group explicitly:
+
+```nix
+programs.mbox.enable = true;
+users.users.YOUR_USERNAME.extraGroups = [ "kvm" ];
+```
+
+Creating the group alone grants nobody access. After activation, log out and
+back in (including restarting the graphical session); existing sessions retain
+old groups. Check `id -nG` and `test -r /dev/kvm && test -w /dev/kvm`.
+The adapter
 installs the wrapper/broker and KVM group permissions; it does not install Sway
 bindings, Noctalia patches or host-service grants.
 

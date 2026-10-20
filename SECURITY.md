@@ -5,6 +5,9 @@ as that same host user. Guest applications are untrusted; VM isolation, explicit
 mounts, network policy and the filtered display bridge constrain their access.
 This is an experimental implementation, not an independent security audit.
 
+- KVM access is explicit: the NixOS adapter creates group `kvm` with device mode
+  0660; consumers must add intended users to that group and start a new login
+  session. Other Linux distributions need equivalent local permissions.
 - The selected project and `-f` mounts are read-write: a guest can alter or delete
   their contents. Do not grant broad home directories or sensitive projects.
 - `/nix/store` is exposed read-only, not the host Nix daemon. Never place secrets

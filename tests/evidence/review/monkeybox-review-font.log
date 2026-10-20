@@ -1,0 +1,2 @@
+HOOK_FONT_MATCH_OK: /nix/store/71mxn2pyq807r32qsd2mdszkajhlb39q-dejavu-fonts-2.37/share/fonts/truetype/DejaVuMathTeXGyre.ttf
+PASS: built hook export/config, normal command routing, real font lookup without /etc/fonts, missing-hook negative control (no custom-image VM boot)
