@@ -1,0 +1,37 @@
+# Explicit guest-loopback compatibility for granted host ports only.
+set -euo pipefail
+ports=$1
+shift
+pids=()
+cleanup() {
+    for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
+    for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+gateway=$(@@PYTHON@@ -c 'import socket,struct
+rows=open("/proc/net/route").read().splitlines()[1:]
+print(next(socket.inet_ntoa(struct.pack("<I",int(r.split()[2],16))) for r in rows if r.split()[1]=="00000000"))')
+for port in $ports; do
+    @@SOCAT@@ "TCP4-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork" "TCP4:$gateway:$port" &
+    pids+=("$!")
+done
+# Connect locally to confirm listeners are ready, not to send service requests.
+@@PYTHON@@ - "$ports" <<'PY'
+import socket,sys,time
+for port in sys.argv[1].split():
+    for attempt in range(100):
+        try:
+            with socket.create_connection(('127.0.0.1', int(port)), timeout=.1):
+                break
+        except OSError:
+            time.sleep(.02)
+    else:
+        raise SystemExit('mbox: guest loopback relay did not become ready')
+PY
+for pid in "${pids[@]}"; do
+    kill -0 "$pid" 2>/dev/null || { echo 'mbox: loopback relay exited' >&2; exit 1; }
+done
+export PATH="@@PI_BIN@@:$PATH"
+"$@"

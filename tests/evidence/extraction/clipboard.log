@@ -1,0 +1,14 @@
+TEST_TOOL wtype: /nix/store/cwzg3yii4xv6hk1yn3jjgw14cxzy98qa-wtype-0.4/bin/wtype
+TEST_TOOL weston: /nix/store/b78hmfrnpc8f285lxgw0kdc1gjj6bv13-weston-16.0.0/bin/weston-presentation-shm
+TEST_TOOL p11-kit.bin: /nix/store/j648l6j410d424k23ss45jg81jpy1ghh-p11-kit-0.26.2-bin/bin/trust
+TEST_TOOL gtk3: /nix/store/ipf3pkb2853bklrmlq3f59pxhyrh44p4-gtk+3-3.24.52/lib/libgtk-3.so.0
+HOST_WINDOWS [(5, 235101, 'wlroots')]
+GUEST_APP_KEYS {"key": 99, "state": 4, "selected": 1, "start": 0, "end": 19}
+
+GUEST_GTK_COMBINED_COPY_PASTE_OK
+error: runtime error: exec session ended without exit event
+
+2026-10-20 08:05:40 - [main.c:328] Could not find config for output HEADLESS-1 ((null))
+mbox clipboard: text exported; expires in 60 seconds
+mbox clipboard: text exported; expires in 60 seconds
+mbox clipboard: text imported and Paste requested

@@ -1,0 +1,66 @@
+# A nested, software-only guest Sway owns a LOCAL clipboard. Only its output
+# reaches the filtered host proxy; no host clipboard protocol is added.
+set -euo pipefail
+outer_runtime=$XDG_RUNTIME_DIR
+case "$WAYLAND_DISPLAY" in
+    /*) outer_display=$WAYLAND_DISPLAY ;;
+    *) outer_display="$outer_runtime/$WAYLAND_DISPLAY" ;;
+esac
+export XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime
+mkdir -m 700 "$XDG_RUNTIME_DIR"
+config="$XDG_RUNTIME_DIR/sway.conf"
+printf '%s\n' 'output * mode 1280x800' 'seat seat0 fallback true' \
+    'default_border none' 'focus_follows_mouse no' 'xwayland disable' > "$config"
+if [ -d /usr/share/mbox-fonts ]; then
+    export FONTCONFIG_FILE=@@FONTCONFIG@@
+else
+    export FONTCONFIG_FILE=@@FONTCONFIG_FALLBACK@@
+fi
+export WLR_BACKENDS=wayland WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
+export WAYLAND_DISPLAY="$outer_display"
+unset SWAYSOCK DISPLAY XAUTHORITY
+@@SWAY@@ --unsupported-gpu -c "$config" &
+compositor=$!
+satellite=''
+cleanup() {
+    [ -z "$satellite" ] || kill "$satellite" 2>/dev/null || true
+    kill "$compositor" 2>/dev/null || true
+    # Bound only our two children; never wait forever in compositor teardown.
+    for ((i=0; i<50; i++)); do
+        if ! kill -0 "$compositor" 2>/dev/null && { [ -z "$satellite" ] || ! kill -0 "$satellite" 2>/dev/null; }; then
+            break
+        fi
+        sleep .1
+    done
+    kill -KILL "$compositor" 2>/dev/null || true
+    [ -z "$satellite" ] || kill -KILL "$satellite" 2>/dev/null || true
+    wait "$compositor" 2>/dev/null || true
+    [ -z "$satellite" ] || wait "$satellite" 2>/dev/null || true
+    rm -rf -- "$XDG_RUNTIME_DIR"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+for ((i=0; i<200; i++)); do
+    for socket in "$XDG_RUNTIME_DIR"/wayland-*; do
+        if [ -S "$socket" ]; then
+            ln -s "$socket" "$XDG_RUNTIME_DIR/mbox-clipboard"
+            break 2
+        fi
+    done
+    kill -0 "$compositor" 2>/dev/null || { echo 'mbox: clipboard compositor failed' >&2; exit 1; }
+    sleep .05
+done
+[ -S "$XDG_RUNTIME_DIR/mbox-clipboard" ] || { echo 'mbox: clipboard compositor timed out' >&2; exit 1; }
+export WAYLAND_DISPLAY=mbox-clipboard
+# Xwayland is guest-local too; native GTK can see the LOCAL data-device manager.
+@@SATELLITE@@ :20 -glamor none -nolisten tcp &
+satellite=$!
+export DISPLAY=:20
+for ((i=0; i<3000; i++)); do
+    [ -S /tmp/.X11-unix/X20 ] && break
+    kill -0 "$satellite" 2>/dev/null || { echo 'mbox: clipboard Xwayland failed' >&2; exit 1; }
+    sleep .05
+done
+[ -S /tmp/.X11-unix/X20 ] || { echo 'mbox: clipboard Xwayland timed out' >&2; exit 1; }
+"$@"

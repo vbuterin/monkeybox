@@ -1,0 +1,800 @@
+#!/usr/bin/env bash
+# mbox — an sbox-shaped shell inside a microVM.
+#
+# sbox isolates with namespaces (bwrap) and shares the host's /nix/store by
+# mounting it; mbox isolates with a hardware VM (libkrun through microsandbox)
+# and shares the store the same way, by bind-mounting it read-only. That is what
+# makes the two interchangeable for the packages this box declares: a store path
+# is the same path inside the guest, so the tracked environment resolves without
+# an image build per rebuild, and nothing has to be pushed into a container
+# registry.
+#
+# Everything user-visible is decided here, on the host, and handed to msb as
+# arguments. `mbox --dry-run` prints exactly what would run, which is also what
+# the module's tests check.
+set -euo pipefail
+
+MSB="${MSB_PATH:-@@MSB@@}"   # overridable so the argument assembly can be tested against a stub
+IMAGE="@@IMAGE@@"
+CPUS="@@CPUS@@"
+MEMORY="@@MEMORY@@"
+ENV_BIN="@@ENV_BIN@@"
+GUEST_BASH="@@GUEST_BASH@@"
+CACERT="@@CACERT@@"
+HOOK_FILE="@@HOOK_FILE@@"
+BASE_IMAGE_TAR="@@BASE_IMAGE_TAR@@"
+BASE_IMAGE_TAG="@@BASE_IMAGE_TAG@@"
+GUEST_SHELL_STORE="@@GUEST_SHELL_STORE@@"
+RUN_AS_SPEC="@@RUN_AS@@"
+RUN_AS_CALLER="@@RUN_AS_CALLER@@"
+ROOT_DISK=(@@ROOT_DISK@@)
+BASHRC="@@BASHRC@@"
+BASHRC_SYSTEM="@@BASHRC_SYSTEM@@"
+SHARE_PROFILE="@@SHARE_PROFILE@@"
+EXCLUDE=(@@EXCLUDE@@)
+NET_MODE="@@NET_MODE@@"
+SHARE_STORE=@@SHARE_STORE@@
+AGENT_WAIT="@@AGENT_WAIT@@"
+
+export MSB_LIBKRUNFW_PATH="@@LIBKRUNFW@@"
+
+STATE_ROOT="${MBOX_STATE_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/mbox}"
+
+# msb keeps its own state (image cache, metadata db) under MSB_HOME. Export it here
+# rather than in a profile: an editor, a script or any other non-login shell would
+# otherwise look in ~/.microsandbox, not find the imported base image, and try to
+# reach a registry for it.
+export MSB_HOME="${MSB_HOME:-$STATE_ROOT/engine}"
+GUEST_HOME="$HOME"          # the guest home mirrors the host path so mounts line up
+MBOX_UID="$(id -u)"
+MBOX_GID="$(id -g)"
+MBOX_USER="$(id -un)"
+
+# Filled in by the mount section, for the PATH given to the guest.
+PATH_EXTRA=""
+
+# Who the guest runs as. Root would be simpler but wrong: the mounts hand every file to
+# the caller's uid, so a root process finds its own home directory owned by a stranger and
+# programs notice — pip gives up on its cache over it and re-downloads everything, and a
+# prompt built from `id` reads "root". msb resolves the account inside the guest, so the
+# passwd and group files below are generated for exactly these ids and mounted over the
+# image's, which carry only root.
+MBOX_GROUP="$(id -gn)"
+USER_ARGS=()
+if [ -n "$RUN_AS_SPEC" ]; then
+    USER_ARGS=(--user="$RUN_AS_SPEC")
+elif [ "$RUN_AS_CALLER" = 1 ]; then
+    USER_ARGS=(--user="$MBOX_UID:$MBOX_GID")
+fi
+
+mkdir -p "$STATE_ROOT"
+PASSWD_FILE="$STATE_ROOT/passwd"
+GROUP_FILE="$STATE_ROOT/group"
+{
+    printf 'root:x:0:0:root:/root:%s\n' "$GUEST_BASH"
+    printf '%s:x:%s:%s:mbox:%s:%s\n' "$MBOX_USER" "$MBOX_UID" "$MBOX_GID" "$GUEST_HOME" "$GUEST_BASH"
+} > "$PASSWD_FILE"
+{
+    printf 'root:x:0:\n'
+    printf '%s:x:%s:\n' "$MBOX_GROUP" "$MBOX_GID"
+} > "$GROUP_FILE"
+
+usage() {
+    cat <<'USAGE'
+mbox — a shell in a microVM, with the host's Nix store mounted read-only.
+
+Usage:
+  mbox [DIRECTORY] [options] [-- COMMAND...]
+  mbox list | ps | stop NAME | rm NAME | logs NAME | inspect NAME | doctor
+
+Options:
+  -p, --expose-port PORT   Let the guest reach this port on the host (repeatable)
+  -i, --internet           Enable internet access (blocked by default)
+  -l, --camera             Opt in to camera /dev/video0 (experimental Firefox portal)
+      --camera-device PATH Select another V4L2 device; requires --camera
+      --no-camera          Disable camera. No microphone implied; fixed 320x240/25fps.
+  -n, --network MODE       open (internet), blocked (no internet), host (alias of open)
+                           Explicit -p grants apply in every mode. In the guest,
+                           connect to its default gateway, not 127.0.0.1.
+                           --expose-port is a legacy name for host access, NOT
+                           sbox's guest-to-host port publishing option.
+      --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
+  -v, --visual             Software Wayland + guest-local Xwayland (filtered compositor access)
+  -c, --clipboard          Opt-in nested desktop with explicit host text transfers (requires -v)
+  -a, --audio              Experimental Pulse streaming (may include recording/monitoring)
+      --no-visual           Disable Wayland/Xwayland bridge (default)
+      --no-audio            Disable audio bridge (default)
+                           Short options may be clustered; only the last may take values.
+                           E.g. -aif PATH -m 15000 or -af PATH -im 15000.
+  -C, --nix-cache PATH     Export an existing store output closure read-only (repeatable);
+                           enable a private guest Nix store, not host daemon access.
+  -P, --persist PATH       Persist PATH under the project's state dir (repeatable)
+  -f, --file PATH...       Share one or more existing files/directories at their canonical
+                           host paths, read-write (repeatable); no copy/private persistence.
+                           Consumes paths until the next option or --. Use -- before COMMAND.
+                           Shell globs work; write ./-name for paths beginning with a dash.
+  -e, --env VAR[=VALUE]    Pass an environment variable (repeatable)
+      --image IMAGE        Override the base image for this sandbox
+      --cpus N             vCPU limit
+  -m, --memory SIZE        Memory limit, e.g. 4096M
+      --ephemeral          Back the home with tmpfs: everything in it is discarded
+      --fresh              Tear down the existing sandbox and build a new one
+      --dry-run            Print the msb invocation instead of running it
+  -h, --help               This text
+
+Without COMMAND, an interactive login shell starts. The home directory, the
+persisted paths and the project directory all survive across runs; the project
+is mounted at its own host path, so paths inside the guest read the same.
+When the project is your host home, only the private guest home is mounted;
+the host home itself is not shared. Use a subdirectory to share project files.
+
+Each invocation boots a VM, so a command costs a few seconds of boot rather than
+the milliseconds sbox would take. In exchange the guest is a real machine: a
+misbehaving process cannot see the host's processes, and a panic takes down the
+sandbox rather than the shell that launched it.
+USAGE
+}
+
+# Subcommands that mean the same thing in msb, passed straight through with the
+# name space we own filtered out of the listing so `mbox list` does not show the
+# sandboxes belonging to other tools on this host.
+case "${1:-}" in
+    list | ls | ps)
+        shift
+        "$MSB" list -q "$@" | grep '^mbox-' || true
+        exit 0
+        ;;
+    stop | rm | remove | logs | inspect | metrics | doctor | status)
+        exec "$MSB" "$@"
+        ;;
+    --help | -h)
+        usage
+        exit 0
+        ;;
+esac
+
+DRY_RUN=0
+FRESH=0
+EPHEMERAL=0
+CLIPBOARD=0
+CAMERA=0
+CAMERA_DEVICE=/dev/video0
+WAYLAND=0
+AUDIO=0
+HOST_LOOPBACK=0
+PROJECT_DIR=""
+declare -a EXPOSE=(@@EXPOSE_TCP@@) EXTRA_PERSIST=() EXTRA_MOUNTS=() EXTRA_ENV=()
+declare -a NIX_CACHE_PATHS=()
+declare -a CMD=()
+CMD_TAKEN=0
+
+while [ $# -gt 0 ]; do
+    # Expand here, never in a pre-pass: application arguments stay untouched.
+    # Validate the entire cluster before applying any of it. Values are always
+    # separate argv entries; only the final short option may take arguments.
+    if [[ "$1" = -?* && "$1" != --* && ${#1} -gt 2 ]]; then
+        cluster="${1#-}"
+        cluster_args=()
+        for ((i=0; i<${#cluster}; i++)); do
+            letter="${cluster:i:1}"
+            case "$letter" in
+                a|v|i|c|l|h) ;;
+                p|n|P|f|e|C|m)
+                    if [ "$i" -ne "$((${#cluster}-1))" ]; then
+                        echo "mbox: -$letter takes arguments and must be last in '$1'" >&2
+                        exit 2
+                    fi ;;
+                *) echo "mbox: unknown option '-$letter' in '$1'" >&2; exit 2 ;;
+            esac
+            cluster_args+=("-$letter")
+        done
+        shift
+        set -- "${cluster_args[@]}" "$@"
+    fi
+    case "$1" in
+        -p|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|-C|--nix-cache)
+            if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = -* ]]; then
+                echo "mbox: $1 requires a value (see mbox --help)" >&2
+                exit 2
+            fi
+            ;;
+    esac
+    case "$1" in
+        --) shift; CMD=("$@"); CMD_TAKEN=1; break ;;
+        -h | --help) usage; exit 0 ;;
+        -p | --expose-port) EXPOSE+=("$2"); shift 2 ;;
+        -n | --network) NET_MODE="$2"; shift 2 ;;
+        -P | --persist) EXTRA_PERSIST+=("$2"); shift 2 ;;
+        -f | --file)
+            shift
+            file_count=0
+            while [ $# -gt 0 ] && [[ "$1" != -* ]]; do
+                [ -n "$1" ] || { echo 'mbox: --file paths must not be empty' >&2; exit 2; }
+                EXTRA_MOUNTS+=("$1")
+                file_count=$((file_count+1))
+                shift
+            done
+            [ "$file_count" -gt 0 ] || { echo 'mbox: --file requires at least one path' >&2; exit 2; } ;;
+        -e | --env) EXTRA_ENV+=("$2"); shift 2 ;;
+        -C | --nix-cache)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo 'mbox: --nix-cache requires an existing store output path' >&2
+                exit 2
+            fi
+            NIX_CACHE_PATHS+=("$2"); shift 2 ;;
+        --image) IMAGE="$2"; shift 2 ;;
+        --cpus) CPUS="$2"; shift 2 ;;
+        -m | --memory) MEMORY="$2"; shift 2 ;;
+        -c | --clipboard)
+            if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo 'mbox: --clipboard takes no value; use -- before a numeric command, or ./N for a project' >&2
+                exit 2
+            fi
+            CLIPBOARD=1; shift ;;
+        -v | --visual) WAYLAND=1; shift ;;
+        -i | --internet) NET_MODE=open; shift ;;
+        -a | --audio) AUDIO=1; shift ;;
+        -l | --camera) CAMERA=1; shift ;;
+        --camera-device) CAMERA_DEVICE="$2"; shift 2 ;;
+        --no-camera) CAMERA=0; shift ;;
+        --host-loopback) HOST_LOOPBACK=1; shift ;;
+        --no-visual) WAYLAND=0; shift ;;
+        --no-internet) NET_MODE=blocked; shift ;;
+        --no-audio) AUDIO=0; shift ;;
+        --ephemeral) EPHEMERAL=1; shift ;;
+        --fresh) FRESH=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        -*)
+            echo "mbox: unknown option '$1'" >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            if [ -z "$PROJECT_DIR" ] && [ -d "$1" ]; then
+                PROJECT_DIR="$1"
+                shift
+            else
+                CMD=("$@")
+                CMD_TAKEN=1
+                break
+            fi
+            ;;
+    esac
+done
+
+# Refuse to nest. Inside the guest, MBOX_SANDBOX is set, and a nested launch
+# would try to start a VM inside a VM with no /dev/kvm.
+if [ -n "${MBOX_SANDBOX:-}" ]; then
+    echo "mbox: already inside an mbox sandbox" >&2
+    exit 1
+fi
+
+if [ "$CLIPBOARD" = 1 ]; then
+    [ "$WAYLAND" = 1 ] || { echo 'mbox: --clipboard requires --visual' >&2; exit 2; }
+    if [ "$RUN_AS_CALLER" != 1 ] || [ -n "$RUN_AS_SPEC" ]; then
+        echo 'mbox: --clipboard currently requires the default caller identity' >&2; exit 2
+    fi
+fi
+PROJECT="$(realpath -m -- "${PROJECT_DIR:-$PWD}")"
+SANDBOX="mbox-$(printf '%s' "$PROJECT" | sha256sum | cut -c1-12)"
+PROJECT_STATE="$STATE_ROOT/projects$PROJECT"
+PERSIST_ROOT="$PROJECT_STATE/persist"
+
+# Runs msb, or prints the invocation. Every decision below is visible through
+# --dry-run, which is how the module is tested without KVM.
+run_msb() {
+    if [ "$DRY_RUN" = 1 ]; then
+        printf 'msb'
+        for a in "$@"; do printf ' %q' "$a"; done
+        printf '\n'
+        return 0
+    fi
+    if [ "$1" = run ] && [ "$WAYLAND" = 1 ] && [ ${#CMD[@]} -gt 0 ]; then
+        # Explicit GUI commands do not need a raw terminal relay. Wait as a
+        # shell builtin so INT/TERM traps run immediately, not after msb exits.
+        "$MSB" "$@" <&0 &
+        RUN_PID=$!
+        local status=0
+        wait "$RUN_PID" || status=$?
+        RUN_PID=""
+        return "$status"
+    fi
+    "$MSB" "$@"
+    return $?
+}
+
+# Export only explicitly selected, already-realized output closures. The guest
+# cannot request additional exports or host builds. Keep snapshots outside the
+# project/home; never read a guest-writable manifest to decide host operations.
+NIX_CACHE_DIR=""
+DESKTOP_RUNTIME=""
+WAYPIPE_PID=""
+CAMERA_PID=""
+CAMERA_RUNTIME=""
+RUN_PID=""
+cancel_run() {
+    trap '' INT TERM
+    if [ -n "$RUN_PID" ]; then
+        echo 'mbox: stopping GUI sandbox…' >&2
+        if ! timeout -k 1 4 "$MSB" stop "$SANDBOX" --timeout 2 --quiet; then
+            echo 'mbox: graceful stop failed; forcing stop (unflushed guest writes may be lost)' >&2
+            timeout -k 1 3 "$MSB" stop "$SANDBOX" --force --quiet || true
+        fi
+        kill "$RUN_PID" 2>/dev/null || true
+        for ((i=0; i<20; i++)); do
+            kill -0 "$RUN_PID" 2>/dev/null || break
+            sleep .1
+        done
+        kill -KILL "$RUN_PID" 2>/dev/null || true
+        wait "$RUN_PID" 2>/dev/null || true
+        RUN_PID=""
+    fi
+    exit "$1"
+}
+cleanup_desktop() {
+    if [ -n "$CAMERA_PID" ]; then
+        kill "$CAMERA_PID" 2>/dev/null || true
+        for ((i=0; i<40; i++)); do
+            kill -0 "$CAMERA_PID" 2>/dev/null || break
+            sleep .1
+        done
+        kill -KILL "$CAMERA_PID" 2>/dev/null || true
+        wait "$CAMERA_PID" 2>/dev/null || true
+    fi
+    [ -z "$CAMERA_RUNTIME" ] || rm -rf -- "$CAMERA_RUNTIME"
+    if [ -n "$WAYPIPE_PID" ]; then
+        @@CLIPBOARD@@ unregister "$WAYPIPE_PID" 2>/dev/null || true
+        kill "$WAYPIPE_PID" 2>/dev/null || true
+        for ((i=0; i<20; i++)); do
+            kill -0 "$WAYPIPE_PID" 2>/dev/null || break
+            sleep .1
+        done
+        kill -KILL "$WAYPIPE_PID" 2>/dev/null || true
+        wait "$WAYPIPE_PID" 2>/dev/null || true
+    fi
+    [ -z "$DESKTOP_RUNTIME" ] || rm -rf -- "$DESKTOP_RUNTIME"
+}
+cleanup_nix_cache() {
+    if [ -n "$NIX_CACHE_DIR" ] && [ "$NIX_CACHE_DIR" != /tmp/mbox-nix-cache.DRY-RUN ]; then
+        rm -rf -- "$NIX_CACHE_DIR"
+    fi
+}
+# Install once, before allocating either resource. Attempt both cleanups even
+# if one directory cannot be removed; neither feature can clobber the other.
+trap 'cleanup_desktop || true; cleanup_nix_cache' EXIT
+trap 'cancel_run 130' INT
+trap 'cancel_run 143' TERM
+if [ ${#NIX_CACHE_PATHS[@]} -gt 0 ]; then
+    if [ "$SHARE_STORE" != 1 ]; then
+        echo 'mbox: --nix-cache requires programs.mbox.shareNixStore = true; the guest Nix executable still runs from the read-only host store' >&2
+        exit 2
+    fi
+    for i in "${!NIX_CACHE_PATHS[@]}"; do
+        p=$(realpath -e -- "${NIX_CACHE_PATHS[$i]}") || exit 2
+        if [[ ! "$p" =~ ^/nix/store/[0-9a-z]{32}-[^/]+$ ]] || [[ "$p" = *.drv ]]; then
+            echo 'mbox: --nix-cache expects an existing top-level store output (or symlink to one), not a flake or derivation' >&2
+            exit 2
+        fi
+        NIX_CACHE_PATHS[$i]="$p"
+    done
+    if [ "$DRY_RUN" = 1 ]; then
+        NIX_CACHE_DIR=/tmp/mbox-nix-cache.DRY-RUN
+        printf 'mbox: would export output closures:'
+        printf ' %q' "${NIX_CACHE_PATHS[@]}"
+        printf '\n'
+    else
+        NIX_CACHE_DIR=$(mktemp -d /tmp/mbox-nix-cache.XXXXXXXX)
+        chmod 700 "$NIX_CACHE_DIR"
+        # Paths, not installables: no flake evaluation, build, or substitution.
+        @@NIX@@/bin/nix --extra-experimental-features nix-command copy \
+            --substituters '' --to "file://$NIX_CACHE_DIR?compression=zstd" -- "${NIX_CACHE_PATHS[@]}"
+    fi
+fi
+
+# ---- mounts ---------------------------------------------------------------
+# The host's store, read-only, is what lets a guest run the packages this box
+# declares without baking them into an image.
+declare -a MOUNTS=()
+if [ -n "$NIX_CACHE_DIR" ]; then
+    MOUNTS+=(--mount-dir "$NIX_CACHE_DIR:/run/mbox-nix-cache:ro,nodev,nosuid")
+fi
+if [ "$SHARE_STORE" = 1 ]; then
+    MOUNTS+=(--mount-dir "/nix/store:/nix/store:ro,nodev,nosuid")
+    # Build-validated configured directories; headless browsers probe fonts too.
+    source "@@FONT_MOUNTS@@"
+fi
+
+# The project at its own path: the guest sees identical paths, so build systems,
+# git and anything recording an absolute path behaves as if nothing were
+# sandboxed. Owned by the caller's uid/gid rather than root's, which is what the
+# mount options are for — files written in the guest land on the host owned by
+# the person who wrote them, not by root.
+# Launching from host HOME is a home-only session, not a grant of the entire
+# host home. Keep the private home below and omit the conflicting project bind.
+# Canonicalize HOME too so a symlinked home cannot bypass this check.
+if [ "$PROJECT" != "$(realpath -m -- "$GUEST_HOME")" ]; then
+    MOUNTS+=(--mount-dir "$PROJECT:$PROJECT:rw,nodev,nosuid,uid=$MBOX_UID,gid=$MBOX_GID")
+fi
+
+# Home: one directory per project, kept between runs. With --ephemeral it is a
+# tmpfs instead and whatever the session wrote is gone.
+if [ "$EPHEMERAL" = 1 ]; then
+    HOME_MOUNT=(--tmpfs "$GUEST_HOME:512M")
+else
+    HOME_BACKING="$PROJECT_STATE/home"
+    mkdir -p "$HOME_BACKING"
+    if [ "$RUN_AS_CALLER" = 1 ] && [ -z "$RUN_AS_SPEC" ] && [ "$DRY_RUN" != 1 ]; then
+        @@PYTHON@@ "@@HOME_REPAIR@@" "$HOME_BACKING"
+    fi
+    HOME_MOUNT=(--mount-dir "$HOME_BACKING:$GUEST_HOME:rw,uid=$MBOX_UID,gid=$MBOX_GID")
+fi
+MOUNTS+=("${HOME_MOUNT[@]}")
+
+# Persisted paths usually need no mount of their own: the home directory is already
+# mounted, and its backing store is this same per-project tree, so a path inside the home
+# only has to exist there for the guest to see it in the same place. Outside the home, or
+# when the home is a tmpfs, it gets its own mount and a backing directory under persist/,
+# addressed by the path's absolute form — the scheme sbox uses, so a project's state looks
+# the same whichever sandbox it came from.
+#
+# Cutting the mount count matters more than it looks: libkrun has a small fixed number of
+# virtio-mmio slots, and a sandbox with a dozen mounts comes up without its virtio-serial
+# console, which is where agentd's bulk transport lives — "serial port not found:
+# /sys/class/virtio-ports", and the sandbox exits with status 0 before the agent answers.
+add_persist() {
+    local p="$1" abs backing rel
+    abs="$(realpath -m -- "$p")"
+    rel="${abs#/}"
+    case "$abs" in
+        "$HOME"|"$HOME"/*)
+            if [ -n "${HOME_BACKING:-}" ]; then
+                mkdir -p "$HOME_BACKING${abs#"$HOME"}"
+                return
+            fi
+            ;;
+    esac
+    backing="$PERSIST_ROOT/$rel"
+    mkdir -p "$backing"
+    MOUNTS+=(--mount-dir "$backing:$abs:rw,uid=$MBOX_UID,gid=$MBOX_GID")
+}
+for p in @@PERSIST@@; do add_persist "$p"; done
+for p in "${EXTRA_PERSIST[@]}"; do add_persist "$p"; done
+
+# A destination in EXCLUDE is skipped rather than mounted: see programs.mbox.excludeMounts.
+mount_is_allowed() {
+    local dest="$1" skip
+    for skip in "${EXCLUDE[@]}"; do
+        [ "$dest" = "$skip" ] && return 1
+    done
+    return 0
+}
+
+for m in @@BIND@@; do
+    IFS=: read -r src dest <<<"$m"
+    mount_is_allowed "$dest" || continue
+    MOUNTS+=(--mount-dir "$src:$dest:rw,uid=$MBOX_UID,gid=$MBOX_GID")
+done
+for m in @@BIND_RO@@; do
+    IFS=: read -r src dest <<<"$m"
+    mount_is_allowed "$dest" || continue
+    # Match sbox's --ro-bind-try: optional host resources may not exist, and
+    # Pi models/MCP configuration are files, not directory mounts.
+    if [ -d "$src" ]; then
+        MOUNTS+=(--mount-dir "$src:$dest:ro,nodev,nosuid")
+    elif [ -f "$src" ]; then
+        MOUNTS+=(--mount-file "$src:$dest:ro")
+    fi
+done
+# Explicit same-path grants. Resolve once on the host; no guest-supplied mount
+# destinations. Reject syntax delimiters and special files rather than allowing
+# msb's SRC:DEST:OPTIONS parser to reinterpret a pathname as mount options.
+for m in "${EXTRA_MOUNTS[@]}"; do
+    if ! shared=$(realpath -e -- "$m") || { [ ! -f "$shared" ] && [ ! -d "$shared" ]; }; then
+        echo 'mbox: --file requires an existing regular file or directory' >&2; exit 2
+    fi
+    case "$shared" in
+        *:*|*$'\n'*) echo 'mbox: --file paths cannot contain colons or newlines' >&2; exit 2 ;;
+    esac
+    # Duplicate destinations (including private HOME/project) must never silently
+    # replace a private mount. The backend also validates the complete mount set.
+    for mounted in "${MOUNTS[@]}" "${HOME_MOUNT[@]}"; do
+        case "$mounted" in
+            *:"$shared":*|"$shared":*) echo 'mbox: --file destination already mounted' >&2; exit 2 ;;
+        esac
+    done
+    if [ -d "$shared" ]; then
+        MOUNTS+=(--mount-dir "$shared:$shared:rw,nodev,nosuid,uid=$MBOX_UID,gid=$MBOX_GID")
+    else
+        MOUNTS+=(--mount-file "$shared:$shared:rw")
+    fi
+done
+
+# The caller's own bashrc, so the guest shell has the same aliases, functions and prompt
+# as the host one (with the sandbox's mark in front of it — see programs.mbox.bashrc for
+# why that matters inside a VM). Mounted rather than written into the guest home, which is
+# a per-project state directory that must not quietly accumulate an out-of-date copy.
+if [ -n "$BASHRC" ] && [ -e "$BASHRC" ]; then
+    MOUNTS+=(--mount-file "$BASHRC:$GUEST_HOME/.bashrc:ro")
+fi
+
+# Generated startup files and account names, not the host's /etc.
+MOUNTS+=(--mount-file "$HOOK_FILE:/etc/mbox-shellhook.bash:ro")
+MOUNTS+=(--mount-file "$PASSWD_FILE:/etc/passwd:ro")
+MOUNTS+=(--mount-file "$GROUP_FILE:/etc/group:ro")
+MOUNTS+=(--mount-file "$BASHRC_SYSTEM:/etc/bash.bashrc:ro")
+MOUNTS+=(--mount-file "$BASHRC_SYSTEM:/etc/mbox-bash.bashrc:ro")
+
+# The host's package profile, at the path the host uses for it. Resolved here rather than
+# baked, because /run/current-system is a symlink that moves on every rebuild and a baked
+# path would name the generation that happened to exist when the wrapper was built.
+if [ "$SHARE_PROFILE" = 1 ]; then
+    SYS_PROFILE="$(realpath -m -- /run/current-system/sw)"
+    if [ -d "$SYS_PROFILE/bin" ]; then
+        MOUNTS+=(--mount-dir "$SYS_PROFILE:/run/current-system/sw:ro,nodev,nosuid")
+        PATH_EXTRA="$SYS_PROFILE/bin"
+    fi
+fi
+
+
+# ---- network --------------------------------------------------------------
+# Explicit profiles avoid depending on the backend's implicit defaults.
+# Never add the broad `host` profile for a single-port grant: host access is
+# guest EGRESS, not published-port ingress. Grants also work with blocked mode.
+declare -a NET=()
+case "$NET_MODE" in
+    blocked)
+        NET+=(--no-net)
+        ;;
+    open | host)
+        NET+=(--net public)
+        ;;
+    *)
+        echo "mbox: unknown network mode '$NET_MODE' (expected open, blocked or host)" >&2
+        exit 2
+        ;;
+esac
+LOOPBACK_PORTS=""
+for p in "${EXPOSE[@]}"; do
+    if [[ ! "$p" =~ ^[0-9]{1,5}$ ]] || (( 10#$p < 1 || 10#$p > 65535 )); then
+        echo "mbox: invalid TCP port '$p' (expected 1..65535)" >&2
+        exit 2
+    fi
+    NET+=(--net-rule "allow:egress@host:tcp:$((10#$p))")
+    case " $LOOPBACK_PORTS " in
+        *" $((10#$p)) "*) ;;
+        *) LOOPBACK_PORTS+=" $((10#$p))" ;;
+    esac
+done
+
+# ---- environment ----------------------------------------------------------
+# PATH leads with the declared environment so the tracked packages are the ones
+# python finds; the image's own bin dirs stay behind it for the few things that
+# come from the base rootfs.
+declare -a ENVS=(
+    -e "HOME=$GUEST_HOME"
+    -e "USER=$MBOX_USER"
+    -e "LOGNAME=$MBOX_USER"
+    -e "PATH=$ENV_BIN/bin${PATH_EXTRA:+:$PATH_EXTRA}:/usr/local/bin:/usr/bin:/bin"
+    -e "SSL_CERT_FILE=$CACERT/etc/ssl/certs/ca-bundle.crt"
+    -e "MBOX_SANDBOX=1"
+    -e "MBOX_PROJECT=$PROJECT"
+    -e "MBOX_SANDBOX_NAME=$SANDBOX"
+    # A UTF-8 locale, or everything above the ASCII range breaks in three places at once:
+    # output is written byte-wise, readline takes the high bits off the input, and python
+    # picks ascii for its streams and refuses non-ASCII input outright. C.UTF-8 rather than
+    # the host's LANG, because a guest has only the locales its own glibc was built with and
+    # the compiled archive that en_US.UTF-8 and friends need is part of the host's /etc,
+    # which is not mounted. C.UTF-8 is built into glibc, so it is always there.
+    -e "LANG=C.UTF-8"
+    -e "LESSCHARSET=utf-8"
+    # One word each half, so that a value containing a space or a glob character — LS_COLORS
+    # is full of `*.ogg=…` — cannot spread or vanish.
+    ${LS_COLORS:+-e} ${LS_COLORS:+"LS_COLORS=$LS_COLORS"}
+)
+
+# The terminal, for the programs that consult terminfo rather than guessing. A terminal
+# type the guest cannot look up is worse than a plainly capable one: readline and every
+# full-screen program degrade in ways that read as a broken keyboard rather than a missing
+# entry — python's new REPL refuses to start at all over a missing `clear`. So the host's
+# own entry is passed along with the directory holding it, and anything the guest would not
+# find is replaced. realpath matters: /run/current-system is a symlink into the store, and
+# /run does not exist inside the VM.
+MBOX_TERMINFO="$(realpath -m -- "${TERMINFO:-/run/current-system/sw/share/terminfo}")"
+if [ -n "${TERM:-}" ] && { [ -f "$MBOX_TERMINFO/$TERM" ] || ls "$MBOX_TERMINFO"/*/"$TERM" >/dev/null 2>&1; }; then
+    ENVS+=(-e "TERM=$TERM" -e "TERMINFO=$MBOX_TERMINFO")
+else
+    ENVS+=(-e "TERM=xterm-256color")
+fi
+for e in "${EXTRA_ENV[@]}"; do
+    ENVS+=(-e "$e")
+done
+
+# ---- things that would otherwise be setup ---------------------------------
+# A sandbox needs /dev/kvm, and the base rootfs needs to be inside msb's cache.
+# Neither should be a step the caller performs, so both are checked and fixed here.
+if [ "${MBOX_SKIP_KVM_CHECK:-0}" != 1 ] && { [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; }; then
+    echo "mbox: no usable /dev/kvm — a sandbox is a real VM, so it needs hardware virtualisation." >&2
+    echo "      Enable it in firmware, then run 'msb doctor' if the device exists but is not usable." >&2
+    exit 1
+fi
+
+# Store paths the wrapper was built around have to still be there. The guest sees the
+# host's store rather than its image's own (the /nix/store mount covers the image's), so
+# a path that has been garbage-collected — a wrapper built without a GC root, for
+# instance — has to be reported as itself instead of arriving as a VM that will not boot.
+for baked in "$GUEST_BASH" "$GUEST_SHELL_STORE" "$ENV_BIN" "$CACERT"; do
+    case "$baked" in
+        /nix/store/*)
+            if [ ! -e "$baked" ]; then
+                echo "mbox: $baked no longer exists in the store; rebuild this wrapper." >&2
+                echo "       (nix build --no-link leaves nothing to keep a closure alive)" >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+mkdir -p "$STATE_ROOT"
+
+PULL=()
+if [ "$IMAGE" = "$BASE_IMAGE_TAG" ]; then
+    # The rootfs is built by Nix and imported once; it is not something to go to a
+    # registry for, so say so — otherwise a network hiccup turns into a hang.
+    # msb labels even a complete cache hit "Pulling ... 0 B/1 B downloading".
+    # Quiet hides that synthetic creation progress, not guest output/errors.
+    PULL=(--pull never --quiet)
+    stamp="$STATE_ROOT/.base-image"
+    if [ ! -f "$stamp" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$BASE_IMAGE_TAR" ]; then
+        if ! run_msb image load --input "$BASE_IMAGE_TAR" --tag "$BASE_IMAGE_TAG" --quiet; then
+            echo "mbox: could not import the base image into msb's cache" >&2
+            exit 1
+        fi
+        # Only after it really happened: a stamp written by --dry-run would tell the
+        # next real launch that the import was already done, when it was not.
+        if [ "$DRY_RUN" != 1 ]; then
+            printf '%s' "$BASE_IMAGE_TAR" > "$stamp" 2>/dev/null || true
+        fi
+    fi
+fi
+
+
+# Desktop routes are IPC capabilities, independent of the IP network policy.
+# Use a private per-invocation socket, never the entire host runtime directory.
+DESKTOP_ARGS=()
+if [ "$CAMERA" = 1 ]; then
+    camera_device=$(realpath -e -- "$CAMERA_DEVICE") || { echo 'mbox: camera device not found' >&2; exit 2; }
+    if [[ ! "$camera_device" =~ ^/dev/video[0-9]+$ ]]; then
+        echo 'mbox: camera requires a /dev/videoN device' >&2; exit 2
+    fi
+    [ -c "$camera_device" ] && [ -r "$camera_device" ] && [ -w "$camera_device" ] || {
+        echo 'mbox: selected camera is not an accessible character device' >&2; exit 2;
+    }
+    CAMERA_RUNTIME=$(mktemp -d /tmp/mbox-camera.XXXXXXXX)
+    if [ "$DRY_RUN" != 1 ]; then
+        @@CAMERA_HOST@@ "$camera_device" "$CAMERA_RUNTIME/frames" &
+        CAMERA_PID=$!
+        for ((i=0; i<100; i++)); do
+            [ -S "$CAMERA_RUNTIME/frames" ] && break
+            kill -0 "$CAMERA_PID" 2>/dev/null || { echo 'mbox: camera bridge failed' >&2; exit 1; }
+            sleep .02
+        done
+        [ -S "$CAMERA_RUNTIME/frames" ] || { echo 'mbox: camera bridge timeout' >&2; exit 1; }
+    fi
+    DESKTOP_ARGS+=(--vsock "$CAMERA_RUNTIME/frames:5004")
+fi
+if [ "$WAYLAND" = 1 ]; then
+    case "${WAYLAND_DISPLAY:-}" in
+        /*) display_socket="$WAYLAND_DISPLAY" ;;
+        ?*) display_socket="${XDG_RUNTIME_DIR:?mbox: XDG_RUNTIME_DIR is unset}/$WAYLAND_DISPLAY" ;;
+        *) echo 'mbox: WAYLAND_DISPLAY is unset' >&2; exit 2 ;;
+    esac
+    [ -S "$display_socket" ] || { echo 'mbox: Wayland socket is unavailable' >&2; exit 2; }
+    DESKTOP_RUNTIME=$(mktemp -d /tmp/mbox-desktop.XXXXXXXX)
+    chmod 700 "$DESKTOP_RUNTIME"
+    waypipe_socket="$DESKTOP_RUNTIME/waypipe"
+    if [ "$DRY_RUN" != 1 ]; then
+        @@WAYPIPE@@ --no-gpu --socket "$waypipe_socket" client &
+        WAYPIPE_PID=$!
+        for ((i=0; i<100; i++)); do
+            [ -S "$waypipe_socket" ] && break
+            kill -0 "$WAYPIPE_PID" 2>/dev/null || { echo 'mbox: waypipe exited' >&2; exit 1; }
+            sleep .02
+        done
+        [ -S "$waypipe_socket" ] || { echo 'mbox: waypipe timed out' >&2; exit 1; }
+        if [ -n "${SWAYSOCK:-}" ]; then
+            @@CLIPBOARD@@ register "$WAYPIPE_PID" "$CLIPBOARD" "$MSB" "$SANDBOX" "$MBOX_UID:$MBOX_GID"
+        elif [ "$CLIPBOARD" = 1 ]; then
+            echo 'mbox: --clipboard requires a host Sway session' >&2; exit 2
+        fi
+    fi
+    DESKTOP_ARGS+=(--vsock "$waypipe_socket:5001")
+fi
+if [ "$AUDIO" = 1 ]; then
+    # The vsock bridge transports one local Unix stream, not Pulse's TCP,
+    # server-list or discovery syntax. Never silently fall back from an override.
+    case "${PULSE_SERVER:-}" in
+        '') pulse_socket="${XDG_RUNTIME_DIR:?mbox: XDG_RUNTIME_DIR is unset}/pulse/native" ;;
+        unix:/*) pulse_socket="${PULSE_SERVER#unix:}" ;;
+        /*) pulse_socket="$PULSE_SERVER" ;;
+        *) echo 'mbox: --audio requires PULSE_SERVER to be an absolute Unix socket path (optionally unix: prefixed)' >&2; exit 2 ;;
+    esac
+    case "$pulse_socket" in
+        *:*|*';'*|*$'\n'*) echo 'mbox: unsupported Pulse socket path syntax' >&2; exit 2 ;;
+    esac
+    [ -S "$pulse_socket" ] || { echo 'mbox: selected Pulse socket is unavailable' >&2; exit 2; }
+    DESKTOP_ARGS+=(--vsock "$pulse_socket:5002")
+fi
+
+BASE_ARGS=(
+    --name "$SANDBOX"
+    "${USER_ARGS[@]}"
+    "${ROOT_DISK[@]}"
+    --cpus "$CPUS"
+    --memory "$MEMORY"
+    --workdir "$PROJECT"
+    "${PULL[@]}"
+    --shell "$GUEST_BASH"
+    "${MOUNTS[@]}"
+    "${NET[@]}"
+    "${DESKTOP_ARGS[@]}"
+    "${ENVS[@]}"
+)
+
+# The command the guest runs. The hook is sourced first so the venv and PATH
+# setup happen before anything looks for an interpreter, and the command itself
+# is passed as positional parameters rather than interpolated, so arguments keep
+# their spaces and quoting.
+inner_command() {
+    if [ ${#CMD[@]} -gt 0 ]; then
+        printf '%s\0' "$GUEST_BASH" -lc \
+            '. /etc/mbox-shellhook.bash; exec "$@"' inner "$@"
+    else
+        printf '%s\0' "$GUEST_BASH" -lc \
+            '. /etc/mbox-shellhook.bash; exec '"$GUEST_BASH"' --rcfile /etc/mbox-bash.bashrc -i'
+    fi
+}
+declare -a INNER=()
+while IFS= read -r -d '' a; do INNER+=("$a"); done < <(inner_command "${CMD[@]}")
+
+if [ "$CAMERA" = 1 ]; then
+    INNER=("@@CAMERA_GUEST@@" "${INNER[@]}")
+fi
+if [ "$WAYLAND" = 1 ] || [ "$AUDIO" = 1 ]; then
+    if [ "$CLIPBOARD" = 1 ]; then
+        INNER=("@@CLIPBOARD_DESKTOP@@" "${INNER[@]}")
+    fi
+    INNER=("@@DESKTOP_GUEST@@" "$WAYLAND" "$AUDIO" "${INNER[@]}")
+fi
+
+if [ "$HOST_LOOPBACK" = 1 ]; then
+    INNER=("@@LOOPBACK_GUEST@@" "$LOOPBACK_PORTS" "${INNER[@]}")
+fi
+
+if [ ${#NIX_CACHE_PATHS[@]} -gt 0 ]; then
+    INNER=("@@NIX_GUEST@@" "${INNER[@]}")
+fi
+
+TTY_ARGS=(-t)
+[ -t 1 ] || TTY_ARGS=(--no-tty)
+# A GUI application has no shell job to receive terminal Ctrl+C. Keep the
+# launching terminal cooked so Ctrl+C cancels mbox itself instead of becoming
+# an unread byte in the guest PTY. Bare `mbox -v` retains interactive shell TTY.
+if [ "$WAYLAND" = 1 ] && [ ${#CMD[@]} -gt 0 ]; then
+    TTY_ARGS=(--no-tty)
+fi
+
+# ---- lifecycle ------------------------------------------------------------
+# One `msb run` per invocation. msb's create/start split is for snapshots: a created
+# sandbox has no entrypoint, so its guest init exits immediately and start has nothing
+# to boot (measured: "sandbox process exited (exit status: 0) before agent relay became
+# available"). Booting is therefore part of every command, which costs a few seconds and
+# buys the thing sbox cannot offer — a stopped VM keeps no state to get wrong, and two
+# commands from two projects cannot interfere with each other.
+#
+# The name is still per-project and --replace still clears the old one, so a crash or a
+# killed shell leaves nothing that blocks the next run.
+if [ "$FRESH" = 1 ]; then
+    "$MSB" remove "$SANDBOX" --force >/dev/null 2>&1 || true
+fi
+
+run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} --replace "$IMAGE" -- "${INNER[@]}"

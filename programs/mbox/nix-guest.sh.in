@@ -1,0 +1,17 @@
+# A private chroot store; the host store remains read-only for ordinary tools.
+set -euo pipefail
+export PATH="@@NIX@@/bin:$PATH"
+export NIX_REMOTE="$HOME/.local/share/mbox-nix/root"
+export MBOX_NIX_CACHE="file:///run/mbox-nix-cache"
+export NIX_CONFIG="experimental-features = nix-command flakes
+build-users-group =
+sandbox = true
+extra-substituters = file:///run/mbox-nix-cache?trusted=true
+"
+# --store PATH explicitly selects a local chroot store, never the host daemon.
+mkdir -p "$NIX_REMOTE"
+# The snapshot was selected/exported by the host caller and is mounted read-only.
+# Trust only this explicit import; retain signature checks for other caches.
+# nix copy does not use a source store's trusted=true substitution setting.
+nix copy --no-check-sigs --all --from "$MBOX_NIX_CACHE"
+exec "$@"

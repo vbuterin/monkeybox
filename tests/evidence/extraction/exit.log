@@ -1,0 +1,41 @@
+BUILT_MISSING_VALUES_OK
+TEST_TOOL sway-unwrapped: /nix/store/jh2y4bkbdd6a0dkpw6ryz0j8cgy6hg7k-sway-unwrapped-1.12/bin/sway
+WRAPPER [] expected 0 actual 0
+DIRECT_MSB_NO_TTY expected 0 actual 0
+WRAPPER [] expected 42 actual 42
+DIRECT_MSB_NO_TTY expected 42 actual 42
+WRAPPER [] expected 127 actual 127
+DIRECT_MSB_NO_TTY expected 127 actual 127
+WRAPPER [] expected 143 actual 143
+DIRECT_MSB_NO_TTY expected 143 actual 143
+WRAPPER ['-v'] expected 0 actual 0
+WRAPPER ['-v'] expected 42 actual 42
+WRAPPER ['-v'] expected 127 actual 127
+WRAPPER ['-v'] expected 143 actual 143
+WRAPPER ['-vc'] expected 0 actual 0 31.537Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualInsert
+ 2026-10-20T08:05:31.537Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualQuery
+ 2026-10-20T08:05:31.538Z INFO  xwayland_process   > Errors from xkbcomp are not fatal to the X server
+ 2026-10-20T08:05:31.542Z INFO  xwayland_satellite::xstate > xfixes version: 1.0
+ 2026-10-20T08:05:31.543Z INFO  xwayland_satellite         > Connected to Xwayland on :20
+ 2026-10-20T08:05:31.543Z INFO  xwayland_satellite         > Successfully notified systemd of ready state.
+
+WRAPPER ['-vc'] expected 42 actual 42 33.126Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualInsert
+ 2026-10-20T08:05:33.126Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualQuery
+ 2026-10-20T08:05:33.127Z INFO  xwayland_process   > Errors from xkbcomp are not fatal to the X server
+ 2026-10-20T08:05:33.134Z INFO  xwayland_satellite::xstate > xfixes version: 1.0
+ 2026-10-20T08:05:33.137Z INFO  xwayland_satellite         > Connected to Xwayland on :20
+ 2026-10-20T08:05:33.137Z INFO  xwayland_satellite         > Successfully notified systemd of ready state.
+
+WRAPPER ['-vc'] expected 127 actual 127 34.863Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualInsert
+ 2026-10-20T08:05:34.863Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualQuery
+ 2026-10-20T08:05:34.864Z INFO  xwayland_process   > Errors from xkbcomp are not fatal to the X server
+ 2026-10-20T08:05:34.870Z INFO  xwayland_satellite::xstate > xfixes version: 1.0
+ 2026-10-20T08:05:34.871Z INFO  xwayland_satellite         > Connected to Xwayland on :20
+ 2026-10-20T08:05:34.872Z INFO  xwayland_satellite         > Successfully notified systemd of ready state.
+
+WRAPPER ['-vc'] expected 143 actual 143 36.295Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualInsert
+ 2026-10-20T08:05:36.295Z INFO  xwayland_process   > > Warning:          Could not resolve keysym XF86ContextualQuery
+ 2026-10-20T08:05:36.295Z INFO  xwayland_process   > Errors from xkbcomp are not fatal to the X server
+ 2026-10-20T08:05:36.299Z INFO  xwayland_satellite::xstate > xfixes version: 1.0
+ 2026-10-20T08:05:36.300Z INFO  xwayland_satellite         > Connected to Xwayland on :20
+ 2026-10-20T08:05:36.300Z INFO  xwayland_satellite         > Successfully notified systemd of ready state.

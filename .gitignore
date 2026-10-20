@@ -1,0 +1,7 @@
+/result
+/result-*
+/.direnv/
+__pycache__/
+*.pyc
+*.qcow2
+/tests/evidence/local/

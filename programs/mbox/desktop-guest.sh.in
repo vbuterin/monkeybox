@@ -1,0 +1,72 @@
+# Guest-side desktop bridges. No host runtime directory or device is mounted.
+set -euo pipefail
+wayland=$1 audio=$2
+shift 2
+runtime=$(mktemp -d /tmp/mbox-desktop.XXXXXXXX)
+chmod 700 "$runtime"
+export XDG_RUNTIME_DIR="$runtime"
+audio_pid=""
+cleanup() {
+    if [ -n "$audio_pid" ]; then
+        kill "$audio_pid" 2>/dev/null || true
+        wait "$audio_pid" 2>/dev/null || true
+    fi
+    rm -rf -- "$runtime"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [ "$audio" = 1 ]; then
+    # The native Pulse protocol can stream without passing shared-memory FDs.
+    # PipeWire's native protocol cannot be forwarded this way.
+    printf 'autospawn = no\nenable-shm = no\nenable-memfd = no\n' > "$runtime/pulse.conf"
+    export PULSE_CLIENTCONFIG="$runtime/pulse.conf"
+    export PULSE_SERVER="unix:$runtime/pulse"
+    # ALSA-only applications (including this MPlayer build) otherwise try a
+    # nonexistent guest sound card and may silently fall back to null output.
+    # Keep this configuration invocation-local; never alter the user's .asoundrc.
+    cat > "$runtime/alsa.conf" <<'ALSA'
+pcm.!default { type pulse }
+ctl.!default { type pulse }
+ALSA
+    export ALSA_CONFIG_PATH="$runtime/alsa.conf"
+    export ALSA_PLUGIN_DIR="@@ALSA_PLUGINS@@"
+    @@SOCAT@@ "UNIX-LISTEN:$runtime/pulse,fork,mode=0600" VSOCK-CONNECT:2:5002 &
+    audio_pid=$!
+    for ((i=0; i<100; i++)); do
+        [ -S "$runtime/pulse" ] && break
+        kill -0 "$audio_pid" 2>/dev/null || { echo 'mbox: audio relay exited' >&2; exit 1; }
+        sleep .02
+    done
+    [ -S "$runtime/pulse" ] || { echo 'mbox: audio relay timed out' >&2; exit 1; }
+fi
+if [ "$wayland" = 1 ]; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    # X11 sockets and Xwayland live inside this VM, spawned only on first use.
+    # The host-side Wayland allowlist remains authoritative for X11 clients too.
+    export PATH="@@SATELLITE_BIN@@:$PATH"
+    unset DISPLAY XAUTHORITY
+    # Waypipe's server status describes the transport, not its child command.
+    # Record the command status inside this invocation-private guest runtime;
+    # never report success when the command/bridge died before producing it.
+    bridge_status=0
+    @@WAYPIPE@@ --no-gpu --xwls --vsock --socket 2:5001 server -- \
+        @@BASH@@ -c '
+            status_file=$1; shift
+            "$@"
+            status=$?
+            printf "%s\n" "$status" > "$status_file"
+            exit "$status"
+        ' mbox-status "$runtime/command-status" "$@" || bridge_status=$?
+    if [ -f "$runtime/command-status" ]; then
+        read -r command_status < "$runtime/command-status"
+        if [[ "$command_status" =~ ^[0-9]+$ ]] && [ "$command_status" -le 255 ]; then
+            [ "$command_status" -eq 0 ] || exit "$command_status"
+            exit "$bridge_status"
+        fi
+    fi
+    echo 'mbox: visual command ended without an exit status' >&2
+    exit 1
+else
+    "$@"
+fi

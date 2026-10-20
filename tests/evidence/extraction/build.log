@@ -1,0 +1,19 @@
+warning: Git tree '/home/v/ethereum/nixos-example/monkeybox' is dirty
+evaluation warning: in docker image mbox-base: The contents parameter is deprecated. Change to copyToRoot if the contents are designed to be copied to the root filesystem, such as when you use `buildEnv` or similar between contents and your packages. Use copyToRoot = buildEnv { ... }; or similar if you intend to add packages to /bin.
+evaluation warning: in docker image mbox-base: The contents parameter is deprecated. Change to copyToRoot if the contents are designed to be copied to the root filesystem, such as when you use `buildEnv` or similar between contents and your packages. Use copyToRoot = buildEnv { ... }; or similar if you intend to add packages to /bin.
+evaluation warning: The xorg package set has been deprecated, 'xorg.xwininfo' has been renamed to 'xwininfo'
+evaluation warning: in docker image mbox-base: The contents parameter is deprecated. Change to copyToRoot if the contents are designed to be copied to the root filesystem, such as when you use `buildEnv` or similar between contents and your packages. Use copyToRoot = buildEnv { ... }; or similar if you intend to add packages to /bin.
+these 5 derivations will be built:
+  /nix/store/pc89139n64xlcxh9fr4z0hhxlbm76cpv-mbox.drv
+  /nix/store/f7cflxz6gm2r4y4vb4jwqj15nbhisfk5-monkeybox.drv
+  /nix/store/h9r2hani7lgar90dqbw87zd72hylg0nz-mbox.drv
+  /nix/store/rgsfkicimc9hdf6k36y137n0c4yda802-monkeybox.drv
+  /nix/store/xi2n7wq29ridfyv8xqlx7mqczhwjlnv7-mbox.drv
+building '/nix/store/xi2n7wq29ridfyv8xqlx7mqczhwjlnv7-mbox.drv'...
+building '/nix/store/h9r2hani7lgar90dqbw87zd72hylg0nz-mbox.drv'...
+building '/nix/store/pc89139n64xlcxh9fr4z0hhxlbm76cpv-mbox.drv'...
+building '/nix/store/rgsfkicimc9hdf6k36y137n0c4yda802-monkeybox.drv'...
+building '/nix/store/f7cflxz6gm2r4y4vb4jwqj15nbhisfk5-monkeybox.drv'...
+/nix/store/p8a3yyrrgx0467s46k3lbc9145mr11jb-monkeybox
+/nix/store/ipvan527knh4qayjs07wgzhfrrshzv80-monkeybox
+/nix/store/bfbdg8ppxf0rvjq8y2b1i4bdrwxfl8mf-mbox

@@ -1,0 +1,79 @@
+--- a/src/tracking.rs
++++ b/src/tracking.rs
+@@ -227,7 +227,21 @@
+ }
+ 
+ /** Additional information for wl_registry */
++// mbox-only build: software application protocols, no clipboard, capture,
++// virtual input, layer shell, output management or security-context delegation.
++// Both advertisements AND binds are checked. The host copy is authoritative:
++// replacing the guest waypipe cannot bypass this map.
++fn mbox_global_allowed(name: &[u8]) -> bool {
++    matches!(name,
++        b"wl_compositor" | b"wl_subcompositor" | b"wl_shm" | b"wl_output" |
++        b"wl_seat" | b"xdg_wm_base" | b"wp_viewporter" | b"wp_presentation" |
++        b"wp_fractional_scale_manager_v1" | b"zxdg_output_manager_v1" |
++        b"zxdg_decoration_manager_v1" | b"zwp_pointer_gestures_v1" |
++        b"zwp_relative_pointer_manager_v1" | b"zwp_pointer_constraints_v1")
++}
++
+ struct ObjWlRegistry {
++    mbox_globals: BTreeMap<u32, (Vec<u8>, u32)>,
+     /** Store global advertisements for wp_linux_drm_syncobj_manager_v1
+      * until zwp_linux_dmabuf_v1 arrives and it is known whether Waypipe
+      * is able to handle DMABUFs and timeline semaphores. */
+@@ -1569,6 +1583,7 @@
+                     obj_type: WaylandInterface::WlRegistry,
+                     extra: WpExtra::WlRegistry(Box::new(ObjWlRegistry {
+                         syncobj_manager_replay: Vec::new(),
++                        mbox_globals: BTreeMap::new(),
+                     })),
+                 },
+             )?;
+@@ -4027,6 +4042,14 @@
+         (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_GLOBAL) => {
+             // filter out events
+             let (name, intf, mut version) = parse_evt_wl_registry_global(msg)?;
++            let WpExtra::WlRegistry(ref mut reg) = obj.extra else {
++                return Err(tag!("mbox: missing registry state"));
++            };
++            if !mbox_global_allowed(intf) {
++                reg.mbox_globals.remove(&name);
++                return Ok(ProcMsg::Done);
++            }
++            reg.mbox_globals.insert(name, (intf.to_vec(), version));
+ 
+             /* Note: nothing that gets filtered out should ever be removed,
+              * so it is not necessary to track interface name codes for global_remove */
+@@ -4204,9 +4227,30 @@
+ 
+             Ok(ProcMsg::Done)
+         }
++        (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_GLOBAL_REMOVE) => {
++            let name = parse_evt_wl_registry_global_remove(msg)?;
++            let WpExtra::WlRegistry(ref mut reg) = obj.extra else {
++                return Err(tag!("mbox: missing registry state"));
++            };
++            if !reg.mbox_globals.contains_key(&name) {
++                return Ok(ProcMsg::Done);
++            }
++            check_space!(msg.len(), 0, remaining_space);
++            reg.mbox_globals.remove(&name);
++            copy_msg(msg, dst);
++            Ok(ProcMsg::Done)
++        }
+         (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_BIND) => {
+             // filter out events
+-            let (_id, name, version, oid) = parse_req_wl_registry_bind(msg)?;
++            let (global_id, name, version, oid) = parse_req_wl_registry_bind(msg)?;
++            let WpExtra::WlRegistry(ref reg) = obj.extra else {
++                return Err(tag!("mbox: missing registry state"));
++            };
++            match reg.mbox_globals.get(&global_id) {
++                Some((allowed_name, max_version)) if allowed_name.as_slice() == name
++                    && version > 0 && version <= *max_version => (),
++                _ => return Err(tag!("mbox: forbidden or unadvertised global bind")),
++            }
+             if name == ZWP_LINUX_DMABUF_V1 {
+                 let light_setup = version >= 4 && glob.on_display_side;
+                 if matches!(glob.dmabuf_device, DmabufDevice::Unknown) {

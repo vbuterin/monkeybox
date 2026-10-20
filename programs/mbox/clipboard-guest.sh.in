@@ -1,0 +1,13 @@
+# Executed inside the guest only, by the host-authorized transfer command.
+set -euo pipefail
+export XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime
+export WAYLAND_DISPLAY=mbox-clipboard
+case "$1" in
+    # Only fixed host-authorized editing actions, on this VM's LOCAL compositor.
+    key-copy) exec @@KEY@@ copy ;;
+    key-paste) exec @@KEY@@ paste ;;
+    clear) exec @@WL_COPY@@ --clear >/dev/null 2>&1 ;;
+    export) exec @@WL_PASTE@@ --no-newline --type 'text/plain;charset=utf-8' ;;
+    import) exec @@WL_COPY@@ --type 'text/plain;charset=utf-8' >/dev/null 2>&1 ;;
+    *) exit 2 ;;
+esac
