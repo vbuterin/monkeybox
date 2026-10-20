@@ -41,19 +41,33 @@ focus; unsupported/non-XIM applications drop commits rather than typing `u`.
 A dead bridge fails closed. No host session bus, Fcitx socket, X socket or
 configuration mount is added. Host Fcitx switching stays on the host.
 
-Nested mode sets `XMODIFIERS=@im=mbox` and `GTK_IM_MODULE=xim`. On native Wayland,
-GTK's XIM constructor declines the backend safely and falls back to the simple
-context; the existing Unicode key relay supplies text. Direct (non-nested)
-visual mode still clears backend-specific IM overrides. Chromium initializes
+Nested mode sets `XMODIFIERS=@im=mbox` and uses a guest-local GTK3 IM selector
+(`GTK_IM_MODULE=mbox`). It selects Wayland text-input on Wayland displays and XIM
+on X11, without loading a backend-specific module on the wrong display. This
+lets native GTK report its caret instead of silently using the simple fallback.
+The selector's private module cache retains GTK's standard modules. Direct
+(non-nested) visual mode still clears backend-specific IM overrides. Chromium initializes
 its GTK3 XIM context lazily; the bridge primes a missing context using a local
 NoSymbol press/release, without replacing a keymap or pressing modifiers.
 Initialization is bounded; a missing context or focus change drops the commit.
 XIM commits over 16 KiB are refused to stay inside protocol encoding limits.
 
-The nested relay handles committed text only: inline preedit, surrounding-text
-reconversion, and accurate candidate-window placement are not implemented.
-Candidate UI stays on the host. Live Russian/Pinyin typing and Xwayland behavior
-must be checked on a rebuilt fixture; source compilation is not a runtime test.
+Candidate UI stays on the host. Guest Sway forwards the focused application's
+text-input-v3 cursor rectangle, including scene/window offsets and nested output
+scale, into the parent output surface. Geometry is refreshed every 30 ms so
+moving/resizing a window also moves the candidate anchor. Parent HiDPI scaling
+is not applied twice. For X11, the bridge reads XIM spot-location attributes,
+translates child-window coordinates into top-level pixels, and scales them to
+the focused satellite surface. This fallback is restricted to satellite's client
+PID. No host pointer position or host desktop queries are used.
+
+Applications must actually publish a caret (text-input-v3 or XIM spot location).
+Missing/disabled/stale geometry resets to the top-left fallback; rotated nested
+outputs are not supported. XIM provides a spot, not the text line's full height.
+Host IME/compositor policy still decides whether candidates appear above or below
+the anchor. Inline preedit and surrounding-text reconversion remain unsupported;
+committed text still follows the existing Unicode/XIM relay. Full rebuilt-guest
+candidate placement must be checked live; component tests are not a VM result.
 
 Explicit visual commands use no guest terminal, so host Ctrl+C requests bounded
 VM shutdown. Forced shutdown warns about possible unflushed writes. Bare visual

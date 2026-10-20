@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Guest IM defaults; optional private compositor/GTK runtime regression.
-Usage: mbox-desktop-im.py [SWAY XWAYLAND_SATELLITE LIBGTK3]
+Usage: mbox-desktop-im.py [SWAY XWAYLAND_SATELLITE LIBGTK3 [IM_CACHE]]
 No Signal profile, host display, host input or host bus is used.
 """
 import os
@@ -21,7 +21,8 @@ assert result == b'unset:unset:unset', result
 print('PASS: guest does not force backend-specific IM modules')
 if len(sys.argv) == 1:
     sys.exit(0)
-sway, satellite, gtk = sys.argv[1:]
+sway, satellite, gtk = sys.argv[1:4]
+im_cache = sys.argv[4] if len(sys.argv) > 4 else None
 # The negative control deliberately aborts; never write a core dump.
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 # Use ctypes so this regression needs neither PyGObject nor a compiler.
@@ -89,12 +90,16 @@ with tempfile.TemporaryDirectory(prefix='mbox-im-test-') as directory:
                                     capture_output=True, text=True, timeout=10)
             assert result.returncode == 0, (backend, result.stdout, result.stderr)
             assert 'GTK_IM_OK' in result.stdout
-            # Nested mode selects guest-local XIM. Its constructor declines a
-            # Wayland display safely (simple-context fallback), unlike the old
-            # Wayland-on-X11 override. Keep fatal-criticals for this regression.
+            # Retain the legacy XIM fallback regression on both backends.
             result = subprocess.run([sys.executable, '-c', gtk_probe, gtk],
                 env=dict(selected, GTK_IM_MODULE='xim'), capture_output=True, text=True, timeout=10)
             assert result.returncode == 0, (backend, result.stdout, result.stderr)
+            if im_cache:
+                result = subprocess.run([sys.executable, '-c', gtk_probe, gtk],
+                    env=dict(selected, GTK_IM_MODULE='mbox', GTK_IM_MODULE_FILE=im_cache),
+                    capture_output=True, text=True, timeout=10)
+                assert result.returncode == 0, (backend, result.stdout, result.stderr)
+                assert 'Unable to load' not in result.stderr and 'Failed to load' not in result.stderr, result.stderr
         # Negative control reproduces the previous forced-Wayland/X11 assertion.
         result = subprocess.run([sys.executable, '-c', gtk_probe, gtk],
             env=dict(env, GDK_BACKEND='x11', GTK_IM_MODULE='wayland', G_DEBUG='fatal-criticals'),

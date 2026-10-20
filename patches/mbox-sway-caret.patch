@@ -1,0 +1,58 @@
+--- a/sway/input/text_input.c
++++ b/sway/input/text_input.c
+@@ -11,6 +11,7 @@
+ #include "sway/layers.h"
+ #include "sway/server.h"
+ #include <wlr/types/wlr_session_lock_v1.h>
++#include "sway-caret.c"
+ 
+ static struct sway_text_input *relay_get_focusable_text_input(
+ 		struct sway_input_method_relay *relay) {
+@@ -363,6 +364,9 @@
+ 	}
+ 
+ 	sway_text_input_create(relay, wlr_text_input);
++	if (getenv("MBOX_CARET_FILE")) {
++		sway_input_method_relay_set_focus(relay, relay->seat->wlr_seat->keyboard_state.focused_surface);
++	}
+ }
+ 
+ static void input_popup_set_focus(struct sway_input_popup *popup,
+@@ -630,6 +634,10 @@
+ void sway_input_method_relay_init(struct sway_seat *seat,
+ 		struct sway_input_method_relay *relay) {
+ 	relay->seat = seat;
++	if (getenv("MBOX_CARET_FILE")) {
++		relay->mbox_caret_timer = wl_event_loop_add_timer(server.wl_event_loop, mbox_update_caret, relay);
++		if (relay->mbox_caret_timer) wl_event_source_timer_update(relay->mbox_caret_timer, 30);
++	}
+ 	wl_list_init(&relay->text_inputs);
+ 	wl_list_init(&relay->input_popups);
+ 
+@@ -650,6 +658,7 @@
+ }
+ 
+ void sway_input_method_relay_finish(struct sway_input_method_relay *relay) {
++	if (relay->mbox_caret_timer) wl_event_source_remove(relay->mbox_caret_timer);
+ 	sway_input_method_relay_finish_text_input(relay);
+ 	sway_input_method_relay_finish_input_method(relay);
+ }
+@@ -677,7 +686,7 @@
+ 		if (surface
+ 				&& wl_resource_get_client(text_input->input->resource)
+ 				== wl_resource_get_client(surface->resource)) {
+-			if (relay->input_method) {
++			if (relay->input_method || getenv("MBOX_CARET_FILE")) {
+ 				wlr_text_input_v3_send_enter(text_input->input, surface);
+ 			} else {
+ 				text_input_set_pending_focused_surface(text_input, surface);
+--- a/include/sway/input/text_input.h
++++ b/include/sway/input/text_input.h
+@@ -18,6 +18,7 @@
+  * wl_keyboard focused doesn't mean that text-input will be focused.
+  */
+ struct sway_input_method_relay {
++	struct wl_event_source *mbox_caret_timer;
+ 	struct sway_seat *seat;
+ 
+ 	struct wl_list text_inputs; // sway_text_input::link

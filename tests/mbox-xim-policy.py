@@ -8,7 +8,9 @@ relay = (root/'programs/mbox/nested-input.c').read_text()
 assert script.index('export MBOX_XIM_SOCKET=') < script.index('@@SWAY@@')
 assert '@@XIM@@ "$MBOX_XIM_SOCKET" &' in script
 assert 'export XMODIFIERS=@im=mbox' in script
-assert 'export GTK_IM_MODULE=xim' in script
+assert 'GTK_IM_MODULE=mbox' in script and 'GTK_IM_MODULE_FILE=@@IM_CACHE@@' in script
+selector = (root/'programs/mbox/im-auto.c').read_text()
+assert 'GDK_IS_WAYLAND_DISPLAY' in selector and '? "wayland" : "xim"' in selector
 assert 'kill -KILL "$xim"' in script and 'wait "$xim"' in script
 assert 'pkgs.xcb-imdkit' in module and '${guestXim}/bin/mbox-xim' in module
 xim_derivation = module.split('  guestXim = ', 1)[1].split('  clipboardDesktop = ', 1)[0]
@@ -17,4 +19,16 @@ assert 'pkgs.libxcb-util' in xim_derivation
 assert 'ximFlags=$(pkg-config --cflags --libs xcb-imdkit xcb)' in xim_derivation
 assert 'mbox_xim_commit(input->commit)' in relay
 assert "return reply != 'N'" in relay
-print('PASS: guest-local XIM startup, environment, dependency, cleanup and fail-closed routing wired')
+caret = (root/'programs/mbox/sway-caret.c').read_text()
+patch = (root/'patches/mbox-sway-caret.patch').read_text()
+assert 'mbox-sway-caret.patch' in module and 'mbox-caret-test.c -lm' in module
+assert 'wlr_scene_node_for_each_buffer' in caret and 'current.cursor_rectangle' in caret
+assert 'pid == satellite_pid' in caret and 'mbox_caret_to_output' in caret
+assert 'current_enabled' in caret and 'active_features' in caret
+assert 'input->entered' in relay and 'output->surface == input->entered' in relay
+assert 'now - caret.time_ms <= 250' in relay
+assert 'wl_event_source_remove(relay->mbox_caret_timer)' in patch
+assert 'relay->input_method || getenv("MBOX_CARET_FILE")' in patch
+for name in ('MBOX_CARET_FILE', 'MBOX_XIM_CARET', 'MBOX_SATELLITE_PID_FILE'):
+    assert script.index('export '+name+'=') < script.index('@@SWAY@@')
+print('PASS: guest-local XIM/GTK/caret startup, environment, dependency, cleanup and fail-closed routing wired')

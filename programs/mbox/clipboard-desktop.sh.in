@@ -20,6 +20,9 @@ fi
 export WLR_BACKENDS=wayland WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
 export WAYLAND_DISPLAY="$outer_display"
 export MBOX_XIM_SOCKET="$XDG_RUNTIME_DIR/xim.sock"
+export MBOX_CARET_FILE="$XDG_RUNTIME_DIR/caret"
+export MBOX_XIM_CARET="$XDG_RUNTIME_DIR/xim-caret"
+export MBOX_SATELLITE_PID_FILE="$XDG_RUNTIME_DIR/satellite.pid"
 unset SWAYSOCK DISPLAY XAUTHORITY
 @@SWAY@@ --unsupported-gpu -c "$config" &
 compositor=$!
@@ -62,6 +65,7 @@ export WAYLAND_DISPLAY=mbox-clipboard
 # Xwayland is guest-local too; native GTK can see the LOCAL data-device manager.
 @@SATELLITE@@ :20 -glamor none -nolisten tcp &
 satellite=$!
+printf '%s\n' "$satellite" > "$MBOX_SATELLITE_PID_FILE"
 export DISPLAY=:20
 for ((i=0; i<3000; i++)); do
     [ -S /tmp/.X11-unix/X20 ] && break
@@ -78,8 +82,7 @@ for ((i=0; i<200; i++)); do
 done
 [ -S "$MBOX_XIM_SOCKET" ] || { echo 'mbox: guest XIM timed out' >&2; exit 1; }
 export XMODIFIERS=@im=mbox
-# XIM is guest-local. GTK's XIM constructor safely declines Wayland displays,
-# falling back to the simple context, which accepts the nested Unicode key relay.
-# Unlike GTK's Wayland module on X11, this does not assert on the other backend.
-export GTK_IM_MODULE=xim
+# Select the IM backend after GTK opens its display: Wayland must advertise
+# cursor rectangles, while X11 uses only our guest-local XIM server.
+export GTK_IM_MODULE_FILE=@@IM_CACHE@@ GTK_IM_MODULE=mbox
 "$@"

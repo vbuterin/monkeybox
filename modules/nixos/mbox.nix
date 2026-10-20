@@ -321,6 +321,7 @@ let
     patches = (old.patches or []) ++ [ ../../patches/mbox-wlroots-input.patch ];
     postPatch = (old.postPatch or "") + ''
       cp ${../../programs/mbox/nested-input.c} backend/wayland/nested-input.c
+      cp ${../../programs/mbox/caret.h} backend/wayland/caret.h
       cp ${../../tests/mbox-nested-input.c} mbox-nested-input-test.c
       substituteInPlace mbox-nested-input-test.c \
         --replace-fail '../programs/mbox/nested-input.c' 'backend/wayland/nested-input.c'
@@ -335,9 +336,34 @@ let
         $(pkg-config --libs wayland-client wayland-server xkbcommon) \
         -o mbox-nested-input-test
       LD_LIBRARY_PATH="$PWD:''${LD_LIBRARY_PATH:-}" ./mbox-nested-input-test
+      cp ${../../tests/mbox-caret.c} mbox-caret-test.c
+      substituteInPlace mbox-caret-test.c \
+        --replace-fail '../programs/mbox/caret.h' 'caret.h'
+      $CC -D_GNU_SOURCE -Wall -Wextra -I../backend/wayland \
+        mbox-caret-test.c -lm -o mbox-caret-test
+      ./mbox-caret-test
     '';
   });
-  nestedSway = pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; };
+  nestedSway = (pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; }).overrideAttrs (old: {
+    patches = (old.patches or []) ++ [ ../../patches/mbox-sway-caret.patch ];
+    postPatch = (old.postPatch or "") + ''
+      cp ${../../programs/mbox/sway-caret.c} sway/input/sway-caret.c
+      cp ${../../programs/mbox/caret.h} sway/input/caret.h
+    '';
+  });
+
+  guestImAuto = pkgs.runCommandCC "mbox-gtk-im" {
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ pkgs.gtk3 pkgs.wayland ];
+  } ''
+    mkdir -p $out/lib
+    imFlags=$(pkg-config --cflags --libs gtk+-3.0 wayland-client)
+    $CC -shared -fPIC -Wall -Wextra -Wno-unused-parameter \
+      ${../../programs/mbox/im-auto.c} $imFlags -o $out/lib/im-mbox.so
+    # Keep GTK's standard modules available, plus the backend-aware selector.
+    cat ${pkgs.gtk3}/lib/gtk-3.0/3.0.0/immodules.cache > $out/immodules.cache
+    printf '\n"%s/lib/im-mbox.so"\n"mbox" "Monkeybox" "gtk30" "" ""\n' "$out" >> $out/immodules.cache
+  '';
 
   guestXim = pkgs.runCommandCC "mbox-xim" {
     nativeBuildInputs = [ pkgs.pkg-config ];
@@ -348,13 +374,13 @@ let
     # Keep dependency discovery separate so pkg-config failure stops the build.
     ximFlags=$(pkg-config --cflags --libs xcb-imdkit xcb)
     $CC -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter \
-      ${../../programs/mbox/xim-guest.c} \
+      -I${../../programs/mbox} ${../../programs/mbox/xim-guest.c} \
       $ximFlags -o $out/bin/mbox-xim
   '';
 
   clipboardDesktop = pkgs.writeShellScript "mbox-clipboard-desktop" (builtins.replaceStrings
-    [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" "@@XIM@@" ]
-    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" "${guestXim}/bin/mbox-xim" ]
+    [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" "@@XIM@@" "@@IM_CACHE@@" ]
+    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" "${guestXim}/bin/mbox-xim" "${guestImAuto}/immodules.cache" ]
     (builtins.readFile ../../programs/mbox/clipboard-desktop.sh.in));
 
   clipboardSource = pkgs.writeText "mbox-clipboard.py" (builtins.replaceStrings

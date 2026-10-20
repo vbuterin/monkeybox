@@ -5,6 +5,7 @@ No host desktop, Signal account, network, microphone or keyboard is used.
 import os
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -34,8 +35,14 @@ assert fn('XSetLocaleModifiers', S,S)(b'@im=mbox')
 im = fn('XOpenIM', P,P,P,S,S)(d,None,None,None); assert im
 # XCreateIC is varargs: explicitly type every pointer/long argument.
 x.XCreateIC.restype=P
+class Point(c.Structure): _fields_ = [('x', c.c_short), ('y', c.c_short)]
+spot = Point(70, 40)
+x.XVaCreateNestedList.restype = P
+attrs = x.XVaCreateNestedList(I(0), S(b'spotLocation'), c.byref(spot), P(None))
 ic = x.XCreateIC(P(im), S(b'inputStyle'), U(0x0008|0x0400),
-    S(b'clientWindow'), U(w), S(b'focusWindow'), U(w), P(None)); assert ic
+    S(b'clientWindow'), U(w), S(b'focusWindow'), U(w),
+    S(b'preeditAttributes'), P(attrs), P(None)); assert ic
+fn('XFree', I,P)(attrs)
 fn('XSetICFocus', None,P)(ic)
 fn('XFlush', I,P)(d)
 print('READY', flush=True)
@@ -58,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-xim-test-') as directory:
         WLR_BACKENDS='headless', WLR_RENDERER='pixman', WLR_LIBINPUT_NO_DEVICES='1',
         DBUS_SESSION_BUS_ADDRESS='unix:path='+directory+'/no-bus',
         DBUS_SYSTEM_BUS_ADDRESS='unix:path='+directory+'/no-system-bus',
-        XMODIFIERS='@im=mbox', LC_ALL='C.UTF-8')
+        XMODIFIERS='@im=mbox', LC_ALL='C.UTF-8', MBOX_XIM_CARET=directory+'/xim-caret')
     for key in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','XAUTHORITY','GTK_IM_MODULE','QT_IM_MODULE'):
         env.pop(key,None)
     children=[]
@@ -96,6 +103,13 @@ with tempfile.TemporaryDirectory(prefix='mbox-xim-test-') as directory:
         wait(lambda:'READY' in (root/'client.log').read_text())
         # READY follows XFlush, not a server roundtrip. Wait for focus handling.
         time.sleep(.1)
+        def caret():
+            p = root/'xim-caret'
+            return struct.unpack('=q6i', p.read_bytes()) if p.exists() else (0,)*7
+        wait(lambda:caret()[0] > 0)
+        assert caret()[1:5] == (70,40,1,1), caret()
+        assert caret()[5] > 0 and caret()[6] > 0, caret()
+        print('PASS: real XIM spot-location attributes publish focused top-level coordinates')
         for text in ('привет', '你好', '🙂', 'abc', '中文 русский'):
             assert commit(text)==b'H'
             expected='TEXT:'+text.encode().hex()
@@ -107,6 +121,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-xim-test-') as directory:
             entry = next(entry for entry in children if entry[0] is xclient)
             entry[1].close()
             children.remove(entry)
+            wait(lambda:caret()[0] == 0)
             (root/'index.html').write_text('<textarea autofocus></textarea>')
             (root/'main.js').write_text('''
 const {app, BrowserWindow} = require('electron');

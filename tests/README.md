@@ -101,8 +101,9 @@ Both passed locally using Electron 43.6.0 and xwayland-satellite 0.8.2.
 The probe explicitly sets focus on its own private X window, since a headless
 compositor has no physical keyboard; no live desktop input is injected.
 
-The real GTK setup test also checks nested `GTK_IM_MODULE=xim` on both display
-backends with fatal criticals. The wlroots unit checks H/N socket framing and
+The real GTK setup test also checks the legacy `GTK_IM_MODULE=xim` fallback on
+both display backends with fatal criticals. Its optional fourth `IM_CACHE`
+argument tests the new backend-aware `mbox` selector on X11 and Wayland. The wlroots unit checks H/N socket framing and
 dead-bridge fail-closed behavior as well as native Unicode keys. Source policy
 checks guard startup, cleanup, environment and packaged dependency wiring.
 
@@ -110,6 +111,20 @@ Not yet validated: rebuilt wlroots/Sway guest, host IME through the full VM to
 XIM, live Signal X11, non-XIM applications, reconversion/preedit. Focus matching
 is conservative; an XIM IC using an unrelated hidden window will not get text.
 These limits must not be described as universal X11 compatibility.
+
+## Candidate caret forwarding
+
+- `cc -D_GNU_SOURCE tests/mbox-caret.c -lm -o /tmp/mbox-caret-test && /tmp/mbox-caret-test`
+  tests surface/output offsets, fractional scale, XIM pixel conversion,
+  stale/out-of-range geometry rejection and atomic record reads/writes.
+- `mbox-xim.py` also checks a real Xlib IC's spot-location publication and
+  invalidation after that client exits (with the optional Electron phase).
+- Patched Sway `text_input.c` syntax-compiles against Sway 1.12/wlroots 0.20.2
+  headers. The updated wlroots helper compiles and passes the existing Unicode
+  tests. The GTK selector compiled and initialized on both private backends.
+- These are component results, **not** an observed host candidate popup or a
+  rebuilt VM. Native client caret publication, final popup placement, window
+  move/resize and HiDPI must still be exercised through the rebuilt guest.
 
 ## Extraction validation
 

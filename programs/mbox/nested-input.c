@@ -12,9 +12,14 @@
 #include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
 #include "text-input-unstable-v3-client-protocol.h"
+#include "caret.h"
 
 struct mbox_input {
     struct wlr_keyboard *keyboard;
+    struct wlr_wl_backend *backend;
+    struct wl_surface *entered;
+    struct wl_event_source *caret_timer;
+    struct mbox_caret last_caret;
     struct wl_registry *registry;
     struct zwp_text_input_manager_v3 *manager;
     struct zwp_text_input_v3 *text;
@@ -23,18 +28,59 @@ struct mbox_input {
     char *commit;
 };
 
+static int mbox_update_parent_caret(void *data) {
+    struct mbox_input *input = data;
+    struct mbox_caret caret = {0};
+    bool updated = false;
+    int64_t now = mbox_caret_now();
+    if (input->text && input->entered &&
+            mbox_caret_read(getenv("MBOX_CARET_FILE"), &caret, sizeof(caret)) &&
+            caret.time_ms > 0 && caret.time_ms <= now && now - caret.time_ms <= 250 &&
+            memchr(caret.output, '\0', sizeof(caret.output)) && caret.output[0] &&
+            caret.x >= 0 && caret.y >= 0 && caret.width >= 0 && caret.height >= 0 &&
+            caret.x <= 65536 && caret.y <= 65536 && caret.width <= 65536 && caret.height <= 65536) {
+        caret.time_ms = 0; /* timestamps must not cause redundant protocol commits */
+        struct wlr_wl_output *output;
+        wl_list_for_each(output, &input->backend->outputs, link) {
+            if (output->surface == input->entered && output->wlr_output.name &&
+                    strcmp(output->wlr_output.name, caret.output) == 0) {
+                if (memcmp(&caret, &input->last_caret, sizeof(caret)) != 0) {
+                    zwp_text_input_v3_set_cursor_rectangle(input->text,
+                        caret.x, caret.y, caret.width, caret.height);
+                    zwp_text_input_v3_commit(input->text);
+                    input->last_caret = caret;
+                }
+                updated = true;
+                break;
+            }
+        }
+    }
+    if (!updated && input->text && input->entered && input->last_caret.output[0]) {
+        /* Never retain another field/window's caret after focus/disable. */
+        memset(&input->last_caret, 0, sizeof(input->last_caret));
+        zwp_text_input_v3_set_cursor_rectangle(input->text, 0, 0, 1, 1);
+        zwp_text_input_v3_commit(input->text);
+    }
+    if (input->caret_timer) wl_event_source_timer_update(input->caret_timer, 30);
+    return 0;
+}
 static void mbox_text_enter(void *data, struct zwp_text_input_v3 *text,
         struct wl_surface *surface) {
+    struct mbox_input *input = data;
+    input->entered = surface;
+    memset(&input->last_caret, 0, sizeof(input->last_caret));
     zwp_text_input_v3_enable(text);
     zwp_text_input_v3_set_content_type(text, 0, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL);
     zwp_text_input_v3_set_cursor_rectangle(text, 0, 0, 1, 1);
     zwp_text_input_v3_commit(text);
+    mbox_update_parent_caret(input);
 }
 static void mbox_text_leave(void *data, struct zwp_text_input_v3 *text,
         struct wl_surface *surface) {
     struct mbox_input *input = data;
     free(input->commit);
     input->commit = NULL;
+    input->entered = NULL;
     zwp_text_input_v3_disable(text);
     zwp_text_input_v3_commit(text);
 }
@@ -174,6 +220,7 @@ static const struct wl_registry_listener mbox_registry_listener = {
 static void mbox_input_destroy(struct wl_listener *listener, void *data) {
     struct mbox_input *input = wl_container_of(listener, input, destroy);
     wl_list_remove(&input->destroy.link);
+    if (input->caret_timer) wl_event_source_remove(input->caret_timer);
     if (input->text) { zwp_text_input_v3_destroy(input->text); }
     if (input->manager) { zwp_text_input_manager_v3_destroy(input->manager); }
     wl_registry_destroy(input->registry);
@@ -184,6 +231,11 @@ static void mbox_input_init(struct wlr_wl_seat *seat) {
     struct mbox_input *input = calloc(1, sizeof(*input));
     if (!input) { return; }
     input->keyboard = &seat->wlr_keyboard;
+    input->backend = seat->backend;
+    if (getenv("MBOX_CARET_FILE")) {
+        input->caret_timer = wl_event_loop_add_timer(seat->backend->event_loop, mbox_update_parent_caret, input);
+        if (input->caret_timer) wl_event_source_timer_update(input->caret_timer, 30);
+    }
     input->seat = seat->wl_seat;
     input->registry = wl_display_get_registry(seat->backend->remote_display);
     input->destroy.notify = mbox_input_destroy;

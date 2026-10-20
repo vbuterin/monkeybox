@@ -15,6 +15,7 @@
 #include <xcb/xcb.h>
 #include <xcb-imdkit/imdkit.h>
 #include <xcb-imdkit/encoding.h>
+#include "caret.h"
 
 static int64_t now_ms(void) {
     struct timespec t;
@@ -76,6 +77,44 @@ static void drain(xcb_connection_t *conn, xcb_im_t *im) {
         free(event);
     }
 }
+/* Refresh even without new IC attributes: X windows may move/resize. */
+static void publish_caret(xcb_connection_t *conn) {
+    const char *path = getenv("MBOX_XIM_CARET");
+    if (!path) return;
+    struct mbox_xim_caret caret = {0};
+    xcb_get_input_focus_reply_t *focus = xcb_get_input_focus_reply(conn, xcb_get_input_focus(conn), NULL);
+    if (focus && focused &&
+            (focus->focus == xcb_im_input_context_get_focus_window(focused) ||
+             focus->focus == xcb_im_input_context_get_client_window(focused)) &&
+            (xcb_im_input_context_get_preedit_attr_mask(focused) & XCB_XIM_XNSpotLocation_MASK)) {
+        xcb_window_t window = xcb_im_input_context_get_focus_window(focused);
+        if (!window) window = xcb_im_input_context_get_client_window(focused);
+        xcb_window_t top = window;
+        for (int i = 0; i < 32; i++) {
+            xcb_query_tree_reply_t *tree = xcb_query_tree_reply(conn, xcb_query_tree(conn, top), NULL);
+            if (!tree) { top = XCB_NONE; break; }
+            bool done = tree->parent == tree->root;
+            xcb_window_t parent = tree->parent;
+            free(tree);
+            if (done) break;
+            if (!parent || parent == top) { top = XCB_NONE; break; }
+            top = parent;
+        }
+        const xcb_im_preedit_attr_t *attr = xcb_im_input_context_get_preedit_attr(focused);
+        xcb_translate_coordinates_reply_t *pos = top ? xcb_translate_coordinates_reply(conn,
+            xcb_translate_coordinates(conn, window, top, attr->spot_location.x, attr->spot_location.y), NULL) : NULL;
+        xcb_get_geometry_reply_t *geo = top ? xcb_get_geometry_reply(conn, xcb_get_geometry(conn, top), NULL) : NULL;
+        if (pos && geo) {
+            caret.time_ms = mbox_caret_now();
+            caret.x = pos->dst_x; caret.y = pos->dst_y;
+            caret.width = 1; caret.height = 1;
+            caret.window_width = geo->width; caret.window_height = geo->height;
+        }
+        free(pos); free(geo);
+    }
+    free(focus);
+    mbox_caret_write(path, &caret, sizeof(caret));
+}
 int main(int argc, char **argv) {
     if (argc != 2 || strlen(argv[1]) >= sizeof(((struct sockaddr_un *)0)->sun_path)) return 2;
     int screen_number;
@@ -105,8 +144,9 @@ int main(int argc, char **argv) {
     struct pollfd fds[] = { { xcb_get_file_descriptor(conn), POLLIN, 0 }, { server, POLLIN, 0 } };
     while (!xcb_connection_has_error(conn)) {
         drain(conn, im);
+        publish_caret(conn);
         xcb_flush(conn);
-        if (poll(fds, 2, -1) < 0) { if (errno == EINTR) continue; break; }
+        if (poll(fds, 2, 30) < 0) { if (errno == EINTR) continue; break; }
         drain(conn, im);
         if (!(fds[1].revents & POLLIN)) continue;
         int peer = accept4(server, NULL, NULL, SOCK_CLOEXEC);
