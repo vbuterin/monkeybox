@@ -339,14 +339,17 @@ let
   });
   nestedSway = pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; };
 
-  guestXim = pkgs.runCommand "mbox-xim" {
+  guestXim = pkgs.runCommandCC "mbox-xim" {
     nativeBuildInputs = [ pkgs.pkg-config ];
-    buildInputs = [ pkgs.xcb-imdkit pkgs.libxcb ];
+    # xcb-imdkit.pc Requires xcb-util, which is not propagated by its package.
+    buildInputs = [ pkgs.xcb-imdkit pkgs.libxcb pkgs.libxcb-util ];
   } ''
     mkdir -p $out/bin
+    # Keep dependency discovery separate so pkg-config failure stops the build.
+    ximFlags=$(pkg-config --cflags --libs xcb-imdkit xcb)
     $CC -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter \
       ${../../programs/mbox/xim-guest.c} \
-      $(pkg-config --cflags --libs xcb-imdkit xcb) -o $out/bin/mbox-xim
+      $ximFlags -o $out/bin/mbox-xim
   '';
 
   clipboardDesktop = pkgs.writeShellScript "mbox-clipboard-desktop" (builtins.replaceStrings
