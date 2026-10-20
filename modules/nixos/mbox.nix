@@ -339,9 +339,19 @@ let
   });
   nestedSway = pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; };
 
+  guestXim = pkgs.runCommand "mbox-xim" {
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ pkgs.xcb-imdkit pkgs.libxcb ];
+  } ''
+    mkdir -p $out/bin
+    $CC -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter \
+      ${../../programs/mbox/xim-guest.c} \
+      $(pkg-config --cflags --libs xcb-imdkit xcb) -o $out/bin/mbox-xim
+  '';
+
   clipboardDesktop = pkgs.writeShellScript "mbox-clipboard-desktop" (builtins.replaceStrings
-    [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" ]
-    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" ]
+    [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" "@@XIM@@" ]
+    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" "${guestXim}/bin/mbox-xim" ]
     (builtins.readFile ../../programs/mbox/clipboard-desktop.sh.in));
 
   clipboardSource = pkgs.writeText "mbox-clipboard.py" (builtins.replaceStrings

@@ -29,13 +29,26 @@ ready devices does not permit VM launch.
 
 The Waypipe filter permits `zwp_text_input_manager_v3` (application-side input),
 not host input-method registration, keyboard grabs or virtual-input protocols.
-Native visual applications can use the host compositor's IME. Backend-specific
-GTK/Qt IM overrides are cleared so each toolkit chooses its actual display's
+Direct native visual applications can use the host compositor's IME. In direct
+mode GTK/Qt IM overrides are cleared so each toolkit chooses its display's
 frontend; forcing GTK's Wayland module on an X11 Electron window can abort it. The guest-only
 wlroots used by nested clipboard Sway preserves parent keymaps and consumes
-host IME commits, translating Unicode into guest-local key events for both
-Wayland and Xwayland applications. This needs no host session bus, Fcitx socket,
-or Fcitx configuration mount. Host Fcitx switching stays on the host.
+host IME commits. Native Wayland retains the guest-local Unicode key relay.
+X11 commits instead go to a private `mbox` XIM server through a bounded local
+socket. Changing keymaps per character is not reliable for Xwayland clients.
+The XIM server sends committed strings only to an IC matching the current X
+focus; unsupported/non-XIM applications drop commits rather than typing `u`.
+A dead bridge fails closed. No host session bus, Fcitx socket, X socket or
+configuration mount is added. Host Fcitx switching stays on the host.
+
+Nested mode sets `XMODIFIERS=@im=mbox` and `GTK_IM_MODULE=xim`. On native Wayland,
+GTK's XIM constructor declines the backend safely and falls back to the simple
+context; the existing Unicode key relay supplies text. Direct (non-nested)
+visual mode still clears backend-specific IM overrides. Chromium initializes
+its GTK3 XIM context lazily; the bridge primes a missing context using a local
+NoSymbol press/release, without replacing a keymap or pressing modifiers.
+Initialization is bounded; a missing context or focus change drops the commit.
+XIM commits over 16 KiB are refused to stay inside protocol encoding limits.
 
 The nested relay handles committed text only: inline preedit, surrounding-text
 reconversion, and accurate candidate-window placement are not implemented.

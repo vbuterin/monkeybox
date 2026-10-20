@@ -19,14 +19,17 @@ else
 fi
 export WLR_BACKENDS=wayland WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
 export WAYLAND_DISPLAY="$outer_display"
+export MBOX_XIM_SOCKET="$XDG_RUNTIME_DIR/xim.sock"
 unset SWAYSOCK DISPLAY XAUTHORITY
 @@SWAY@@ --unsupported-gpu -c "$config" &
 compositor=$!
 satellite=''
+xim=''
 cleanup() {
+    [ -z "$xim" ] || kill "$xim" 2>/dev/null || true
     [ -z "$satellite" ] || kill "$satellite" 2>/dev/null || true
     kill "$compositor" 2>/dev/null || true
-    # Bound only our two children; never wait forever in compositor teardown.
+    # Bound only our children; never wait forever in compositor teardown.
     for ((i=0; i<50; i++)); do
         if ! kill -0 "$compositor" 2>/dev/null && { [ -z "$satellite" ] || ! kill -0 "$satellite" 2>/dev/null; }; then
             break
@@ -35,6 +38,8 @@ cleanup() {
     done
     kill -KILL "$compositor" 2>/dev/null || true
     [ -z "$satellite" ] || kill -KILL "$satellite" 2>/dev/null || true
+    [ -z "$xim" ] || kill -KILL "$xim" 2>/dev/null || true
+    [ -z "$xim" ] || wait "$xim" 2>/dev/null || true
     wait "$compositor" 2>/dev/null || true
     [ -z "$satellite" ] || wait "$satellite" 2>/dev/null || true
     rm -rf -- "$XDG_RUNTIME_DIR"
@@ -64,4 +69,17 @@ for ((i=0; i<3000; i++)); do
     sleep .05
 done
 [ -S /tmp/.X11-unix/X20 ] || { echo 'mbox: clipboard Xwayland timed out' >&2; exit 1; }
+@@XIM@@ "$MBOX_XIM_SOCKET" &
+xim=$!
+for ((i=0; i<200; i++)); do
+    [ -S "$MBOX_XIM_SOCKET" ] && break
+    kill -0 "$xim" 2>/dev/null || { echo 'mbox: guest XIM failed' >&2; exit 1; }
+    sleep .05
+done
+[ -S "$MBOX_XIM_SOCKET" ] || { echo 'mbox: guest XIM timed out' >&2; exit 1; }
+export XMODIFIERS=@im=mbox
+# XIM is guest-local. GTK's XIM constructor safely declines Wayland displays,
+# falling back to the simple context, which accepts the nested Unicode key relay.
+# Unlike GTK's Wayland module on X11, this does not assert on the other backend.
+export GTK_IM_MODULE=xim
 "$@"

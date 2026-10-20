@@ -89,6 +89,12 @@ with tempfile.TemporaryDirectory(prefix='mbox-im-test-') as directory:
                                     capture_output=True, text=True, timeout=10)
             assert result.returncode == 0, (backend, result.stdout, result.stderr)
             assert 'GTK_IM_OK' in result.stdout
+            # Nested mode selects guest-local XIM. Its constructor declines a
+            # Wayland display safely (simple-context fallback), unlike the old
+            # Wayland-on-X11 override. Keep fatal-criticals for this regression.
+            result = subprocess.run([sys.executable, '-c', gtk_probe, gtk],
+                env=dict(selected, GTK_IM_MODULE='xim'), capture_output=True, text=True, timeout=10)
+            assert result.returncode == 0, (backend, result.stdout, result.stderr)
         # Negative control reproduces the previous forced-Wayland/X11 assertion.
         result = subprocess.run([sys.executable, '-c', gtk_probe, gtk],
             env=dict(env, GDK_BACKEND='x11', GTK_IM_MODULE='wayland', G_DEBUG='fatal-criticals'),

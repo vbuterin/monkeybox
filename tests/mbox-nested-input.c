@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <wayland-client-protocol.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
@@ -25,6 +26,7 @@ static void on_key(struct wl_listener *listener, void *data) {
     }
 }
 int main(void) {
+    unsetenv("MBOX_XIM_SOCKET");
     struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     assert(context);
     struct xkb_keymap *original = xkb_keymap_new_from_names(context, NULL, XKB_KEYMAP_COMPILE_NO_FLAGS);
@@ -52,6 +54,46 @@ int main(void) {
     input.commit = strdup("\n\t\x7f");
     mbox_text_done(&input, NULL, 2);
     assert(count == sizeof(expected) / sizeof(expected[0]));
+    setenv("MBOX_XIM_SOCKET", "/nonexistent/mbox-test-xim.sock", 1);
+    input.commit = strdup("你好");
+    mbox_text_done(&input, NULL, 3);
+    assert(input.commit == NULL);
+    assert(count == sizeof(expected) / sizeof(expected[0]));
+    unsetenv("MBOX_XIM_SOCKET");
+    /* Exercise the production request framing and H/N routing with a private
+     * socket, without a compositor. Xlib/Electron delivery is tested separately. */
+    char directory[] = "/tmp/mbox-xim-unit-XXXXXX";
+    assert(mkdtemp(directory));
+    struct sockaddr_un address = { .sun_family = AF_UNIX };
+    snprintf(address.sun_path, sizeof(address.sun_path), "%s/xim", directory);
+    int server = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+    assert(server >= 0);
+    assert(bind(server, (void *)&address, sizeof(address)) == 0);
+    assert(listen(server, 1) == 0);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        for (int i = 0; i < 2; i++) {
+            int peer = accept(server, NULL, NULL);
+            assert(peer >= 0);
+            char value[64];
+            ssize_t size = recv(peer, value, sizeof(value), 0);
+            assert(size == 6 && memcmp(value, "你好", 6) == 0);
+            char result = i == 0 ? 'H' : 'N';
+            assert(send(peer, &result, 1, 0) == 1);
+            close(peer);
+        }
+        _exit(0);
+    }
+    setenv("MBOX_XIM_SOCKET", address.sun_path, 1);
+    assert(mbox_xim_commit("你好"));
+    assert(!mbox_xim_commit("你好"));
+    int status;
+    assert(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    close(server);
+    unlink(address.sun_path);
+    rmdir(directory);
+    unsetenv("MBOX_XIM_SOCKET");
     wl_list_remove(&listener.link);
     wlr_keyboard_finish(&keyboard);
     xkb_keymap_unref(original);

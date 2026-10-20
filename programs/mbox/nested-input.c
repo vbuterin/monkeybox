@@ -1,10 +1,15 @@
 /* Included by the mbox-only wlroots Wayland backend's seat.c.
  * Parent text-input is an application capability, NOT a host input-method or
  * virtual-keyboard grant. Commit Unicode as guest-local keyboard events so X11
- * applications as well as Wayland applications receive host IME text. Candidate
+ * applications use a guest-local XIM bridge, while Wayland applications receive
+ * host IME text through the key relay. Candidate
  * UI remains on the host; inline preedit/surrounding-text editing is unsupported.
  */
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
 #include "text-input-unstable-v3-client-protocol.h"
 
@@ -62,10 +67,54 @@ static uint32_t mbox_utf8(const unsigned char **cursor) {
     *cursor = p;
     return cp;
 }
+/* Route X11 commits through its guest-local XIM server. Dynamic keymap changes
+ * cannot encode text reliably across Xwayland/XKB client-side keymap caches.
+ * Only an explicit N (no X focus) allows the existing native Wayland relay.
+ * A configured but dead bridge fails closed instead of typing physical U keys.
+ */
+static bool mbox_xim_commit(const char *text) {
+    const char *path = getenv("MBOX_XIM_SOCKET");
+    if (!path) { return false; }
+    struct sockaddr_un address = { .sun_family = AF_UNIX };
+    if (strlen(path) >= sizeof(address.sun_path)) { return true; }
+    strcpy(address.sun_path, path);
+    int fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    if (fd < 0) { return true; }
+    struct timeval timeout = { .tv_usec = 200000 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    char reply = 'H';
+    size_t length = strlen(text);
+    if (connect(fd, (void *)&address, sizeof(address)) == 0 &&
+            send(fd, text, length, MSG_NOSIGNAL) == (ssize_t)length) {
+        if (recv(fd, &reply, 1, 0) != 1) { reply = 'H'; }
+    }
+    close(fd);
+    return reply != 'N';
+}
 static void mbox_text_done(void *data, struct zwp_text_input_v3 *text, uint32_t serial) {
     struct mbox_input *input = data;
     struct wlr_keyboard *keyboard = input->keyboard;
     if (!input->commit || !keyboard->keymap) { return; }
+    /* Validate and strip controls before either delivery path. Never forward a
+     * truncated UTF-8 sequence or committed shortcut/control character to XIM. */
+    const unsigned char *scan = (const unsigned char *)input->commit;
+    char *out = input->commit;
+    while (*scan) {
+        const unsigned char *start = scan;
+        uint32_t cp = mbox_utf8(&scan);
+        if (!cp) { break; }
+        if (cp < 0x20 || cp == 0x7f) { continue; }
+        size_t length = scan - start;
+        memmove(out, start, length);
+        out += length;
+    }
+    *out = '\0';
+    if (mbox_xim_commit(input->commit)) {
+        free(input->commit);
+        input->commit = NULL;
+        return;
+    }
     struct xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     if (!context) { return; }
     struct xkb_keymap *original = xkb_keymap_ref(keyboard->keymap);

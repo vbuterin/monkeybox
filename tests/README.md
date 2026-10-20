@@ -25,8 +25,8 @@ before booting. Noctalia tests are intentionally not part of this project.
 
 ## Check tiers and source snapshots
 
-The `checks.x86_64-linux.policy` derivation runs eleven fast policy/helper scripts: source-package pins,
-resolver mocks, network assembly, camera host harness, options, audio policy, desktop IM defaults, file mounts,
+The `checks.x86_64-linux.policy` derivation runs twelve fast policy/helper scripts: source-package pins,
+resolver mocks, network assembly, camera host harness, options, audio policy, desktop IM defaults, XIM wiring, file mounts,
 home-project mounts, clipboard policy and preview. Network assembly is distinct
 from its explicit Nix evaluation below. Use the explicit `nix build` gate above:
 flake-check summaries and cached/build-vs-run counts are not a test count.
@@ -89,6 +89,27 @@ signal readiness. Both the pure and real Pulse tests passed locally. The bridge
 uses a self-contained bus configuration, not the host `/etc/dbus-1` tree.
 
 These are component regression tests, not a rebuilt VM or full Signal call test.
+
+## Guest-local XIM follow-up
+
+`python3 tests/mbox-xim.py SWAY SATELLITE XIM LIBX11 [ELECTRON]` creates a
+headless private compositor, Xwayland and XIM server. An Xlib client verifies
+Russian, Chinese, emoji and ASCII commits. The optional disposable Electron
+app verifies Chinese/Russian text in an actual X11 textarea, including the
+first commit with no preceding keypress. No Signal profile is opened.
+Both passed locally using Electron 43.6.0 and xwayland-satellite 0.8.2.
+The probe explicitly sets focus on its own private X window, since a headless
+compositor has no physical keyboard; no live desktop input is injected.
+
+The real GTK setup test also checks nested `GTK_IM_MODULE=xim` on both display
+backends with fatal criticals. The wlroots unit checks H/N socket framing and
+dead-bridge fail-closed behavior as well as native Unicode keys. Source policy
+checks guard startup, cleanup, environment and packaged dependency wiring.
+
+Not yet validated: rebuilt wlroots/Sway guest, host IME through the full VM to
+XIM, live Signal X11, non-XIM applications, reconversion/preedit. Focus matching
+is conservative; an XIM IC using an unrelated hidden window will not get text.
+These limits must not be described as universal X11 compatibility.
 
 ## Extraction validation
 
