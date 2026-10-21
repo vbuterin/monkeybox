@@ -18,6 +18,9 @@ rustPlatform.buildRustPackage {
   };
   cargoHash = "sha256-h1CKRcB0otcGibRD3gQJsGiDLJnW7BH6QxjMCJtGVT0=";
   auditable = false;
+  # Historical PIDs on terminated Unix runs must not block --replace after
+  # PID reuse. Retains lifecycle locking and checks live runtime endpoints.
+  patches = [ ../../patches/microsandbox-terminated-pid.patch ];
   nativeBuildInputs = [ pkg-config cmake ninja clang python3 perl ];
   buildInputs = [ libcap_ng openssl zlib ];
   LIBCLANG_PATH = "${libclang.lib}/lib";
@@ -75,6 +78,8 @@ rustPlatform.buildRustPackage {
     runHook preCheck
     cargo test --frozen --profile ci -p msb_krun_devices --lib virtio::vsock::packet::tests
     cargo test --frozen --profile ci -p msb_krun_devices --lib virtio::vsock::custom_stream::tests
+    cargo test --frozen --profile ci --no-default-features --features local,net \
+      -p microsandbox --lib test_prepare_create_target
     runHook postCheck
   '';
   installPhase = ''

@@ -20,4 +20,11 @@ assert 'patch --batch --fuzz=0' in pkg
 assert 'pkgs.callPackage ../../packages/microsandbox { }' in module
 assert '"${msbPackage}/lib/libkrunfw.so"' in module
 assert not (root/'modules/nixos/mbox-vsock-candidate.nix').exists()
-print('PASS: pinned PR backport, source agent, offline Cargo, original firmware, no impure candidate')
+pid_patch = (root/'patches/microsandbox-terminated-pid.patch').read_text()
+assert '../../patches/microsandbox-terminated-pid.patch' in pkg
+assert '-p microsandbox --lib test_prepare_create_target' in pkg
+assert 'cfg!(windows) || run.status == run_entity::RunStatus::Running' in pid_patch
+assert 'test_prepare_create_target_terminated_reused_pid' in pid_patch
+assert 'UnixListener::bind(&paths.control)' in pid_patch
+assert 'runtime endpoint is still live' in pid_patch
+print('PASS: pinned PR backport, source agent, offline Cargo, original firmware, no impure candidate; terminated-PID fix and regression wired')

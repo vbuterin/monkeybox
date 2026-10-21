@@ -1,0 +1,103 @@
+--- a/sdk/rust/lib/backend/local/sandbox/create.rs
++++ b/sdk/rust/lib/backend/local/sandbox/create.rs
+@@ -1732,6 +1732,12 @@
+             .await?;
+             if Self::load_latest_run(pools.read(), model.id)
+                 .await?
++                // On Unix the lifecycle guard above excludes a resident runtime.
++                // A terminated run's PID is historical and may now name an
++                // unrelated process, including one from a later host boot.
++                // Keep Windows' conservative check: older Windows runtimes can
++                // publish Terminated before releasing their resources.
++                .filter(|run| cfg!(windows) || run.status == run_entity::RunStatus::Running)
+                 .and_then(|run| run.pid)
+                 .is_some_and(Self::pid_is_alive)
+             {
+@@ -1741,6 +1747,14 @@
+                 )));
+             }
+ 
++            // Also protect runtimes/endpoints predating lifecycle-lock ownership,
++            // just as we already do when there is no persisted sandbox row.
++            if sandbox_runtime_endpoint_is_live(run_dir, sandbox_dir, &config.spec.name)? {
++                return Err(crate::MicrosandboxError::SandboxStillRunning(format!(
++                    "cannot replace sandbox {:?}: a runtime endpoint is still live",
++                    config.spec.name
++                )));
++            }
+             microsandbox_runtime::ipc::remove_sandbox_socket_artifacts(run_dir, &config.spec.name)?;
+             remove_dir_if_exists(sandbox_dir)?;
+ 
+@@ -3542,6 +3556,72 @@
+                 .await
+                 .unwrap()
+                 .is_none()
++        );
++    }
++
++    // Deterministic PID-reuse fixture: the terminated run names the test
++    // process, not a real VM. Never signal it. No host state or VM is involved.
++    #[tokio::test]
++    #[cfg(unix)]
++    async fn test_prepare_create_target_terminated_reused_pid() {
++        let temp = tempfile::Builder::new()
++            .prefix("msb-pid")
++            .tempdir_in("/tmp")
++            .unwrap();
++        let pools = open_test_pools(&temp.path().join("test.db")).await;
++        let sandbox_dir = temp.path().join("sandboxes/reused");
++        fs::create_dir_all(&sandbox_dir).unwrap();
++        let mut config = test_config("reused");
++        let sandbox_id = LocalBackend::insert_sandbox_record(pools.write(), &config)
++            .await
++            .unwrap();
++        LocalBackend::update_sandbox_status(pools.write(), sandbox_id, SandboxStatus::Stopped)
++            .await
++            .unwrap();
++        run_entity::Entity::insert(run_entity::ActiveModel {
++            sandbox_id: Set(sandbox_id),
++            pid: Set(Some(std::process::id() as i32)),
++            status: Set(run_entity::RunStatus::Terminated),
++            terminated_at: Set(Some(chrono::Utc::now().naive_utc())),
++            ..Default::default()
++        })
++        .exec(pools.write())
++        .await
++        .unwrap();
++        config.replace_existing = true;
++        let run_dir = temp.path().join("run");
++
++        // A terminal row is not permission to delete a live endpoint.
++        let paths = microsandbox_runtime::ipc::sandbox_socket_paths(&run_dir, "reused");
++        fs::create_dir_all(&paths.canonical_dir).unwrap();
++        let listener = std::os::unix::net::UnixListener::bind(&paths.control).unwrap();
++        let error = LocalBackend::prepare_create_target(&pools, &config, &sandbox_dir, &run_dir)
++            .await
++            .unwrap_err();
++        assert!(error.to_string().contains("runtime endpoint is still live"));
++        assert!(sandbox_dir.exists());
++        assert!(
++            sandbox_entity::Entity::find_by_id(sandbox_id)
++                .one(pools.read())
++                .await
++                .unwrap()
++                .is_some()
++        );
++        drop(listener);
++
++        // The socket file remains, but there is no listening owner. The old
++        // PID must not prevent replacement or cause an unrelated process kill.
++        LocalBackend::prepare_create_target(&pools, &config, &sandbox_dir, &run_dir)
++            .await
++            .unwrap();
++        assert!(LocalBackend::pid_is_alive(std::process::id() as i32));
++        assert!(!sandbox_dir.exists());
++        assert!(
++            sandbox_entity::Entity::find_by_id(sandbox_id)
++                .one(pools.read())
++                .await
++                .unwrap()
++                .is_none()
+         );
+     }
+ 
