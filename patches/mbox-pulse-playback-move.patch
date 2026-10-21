@@ -1,0 +1,16 @@
+--- a/src/modules/module-tunnel.c
++++ b/src/modules/module-tunnel.c
+@@ -1859,7 +1859,13 @@
+         pa_tagstruct_put_boolean(reply, false); /* fix_format */
+         pa_tagstruct_put_boolean(reply, false); /* fix_rate */
+         pa_tagstruct_put_boolean(reply, false); /* fix_channels */
++#ifdef TUNNEL_SINK
++        /* Let host policy move playback when the user selects headphones.
++         * Capture remains pinned to the explicitly granted source. */
++        pa_tagstruct_put_boolean(reply, false); /* no_move */
++#else
+         pa_tagstruct_put_boolean(reply, true); /* no_move */
++#endif
+         pa_tagstruct_put_boolean(reply, false); /* variable_rate */
+     }
+ 

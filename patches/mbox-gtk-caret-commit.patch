@@ -1,0 +1,18 @@
+--- a/modules/input/imwayland.c
++++ b/modules/input/imwayland.c
+@@ -850,6 +850,15 @@
+     gtk_event_controller_reset (GTK_EVENT_CONTROLLER (context_wayland->gesture));
+ 
+   context_wayland->cursor_rect = *rect;
++
++  /* Firefox can update this after focus-in already committed the previous
++   * field's rectangle. Publish geometry-only changes without waiting for
++   * surrounding text, a keypress, or another focus transition. */
++  if (global && global->current == context && context_wayland->enabled)
++    {
++      notify_cursor_location (context_wayland);
++      commit_state (context_wayland);
++    }
+ }
+ 
+ static void

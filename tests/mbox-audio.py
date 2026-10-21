@@ -12,6 +12,13 @@ import shutil
 from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[1]
+module = (root / 'modules/nixos/mbox.nix').read_text()
+assert '${bridgePulse}/bin/pulseaudio' in module
+assert '../../patches/mbox-pulse-playback-move.patch' in module
+move_patch = (root / 'patches/mbox-pulse-playback-move.patch').read_text()
+assert '#ifdef TUNNEL_SINK' in move_patch
+assert '+        pa_tagstruct_put_boolean(reply, false); /* no_move */' in move_patch
+assert '         pa_tagstruct_put_boolean(reply, true); /* no_move */' in move_patch
 spec = importlib.util.spec_from_file_location('audio', root / 'programs/mbox/audio-host.py')
 audio = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audio)
@@ -93,6 +100,8 @@ with tempfile.TemporaryDirectory(prefix='mbox-audio-test-') as temp:
     server = 'unix:' + str(temp / 'host/native')
     conf = temp / 'host.pa'
     conf.write_text('.fail\nload-module module-null-sink sink_name=host_output\n'
+                    'load-module module-null-sink sink_name=headphones\n'
+                    'set-default-sink host_output\n'
                     'load-module module-null-source source_name=fixture_mic\n'
                     'set-default-source fixture_mic\n'
                     'load-module module-native-protocol-unix socket=' + str(temp / 'host/native') + ' auth-anonymous=yes\n')
@@ -139,6 +148,28 @@ with tempfile.TemporaryDirectory(prefix='mbox-audio-test-') as temp:
                 assert result.returncode != 0, result
             result = ctl(endpoint, 'exit', check=False)
             assert result.returncode != 0 and bridge.poll() is None
+            if playback:
+                streams = json.loads(ctl(server, '--format=json', 'list', 'sink-inputs').stdout)
+                assert len(streams) == 1, streams
+                stream = streams[0]['index']
+                # Host policy must be able to move this invocation's playback
+                # stream on an output-device switch, without restarting the VM.
+                ctl(server, 'set-default-sink', 'headphones')
+                ctl(server, 'move-sink-input', str(stream), 'headphones')
+                devices = json.loads(ctl(server, '--format=json', 'list', 'sinks').stdout)
+                target = next(s['index'] for s in devices if s['name'] == 'headphones')
+                streams = json.loads(ctl(server, '--format=json', 'list', 'sink-inputs').stdout)
+                assert streams[0]['sink'] == target, streams
+                ctl(server, 'move-sink-input', str(stream), 'host_output')
+                ctl(server, 'set-default-sink', 'host_output')
+            if mic:
+                # A playback-route fix must not make capture movable. Even an
+                # explicit host request must fail to redirect it to a monitor.
+                streams = json.loads(ctl(server, '--format=json', 'list', 'source-outputs').stdout)
+                assert len(streams) == 1, streams
+                moved = ctl(server, 'move-source-output', str(streams[0]['index']),
+                            'headphones.monitor', check=False)
+                assert moved.returncode != 0, moved
             bridge.terminate()
             bridge.wait(timeout=5)
             assert not (runtime / 'ready').exists()
@@ -153,7 +184,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-audio-test-') as temp:
                              '1', '0', str(runtime)], env)
         assert bridge.wait(timeout=12) != 0
         assert not (runtime / 'ready').exists()
-        print('PASS: real private Pulse directions/defaults/readiness on an occupied session bus; guest module loading/exit denied; unreachable upstream fails closed')
+        print('PASS: real private Pulse playback moves both ways; capture cannot move to monitor; directions/defaults/readiness; guest module loading/exit denied; unreachable upstream fails closed')
     finally:
         for proc, log in reversed(processes):
             if proc.poll() is None:

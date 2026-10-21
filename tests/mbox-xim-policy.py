@@ -10,7 +10,15 @@ assert '@@XIM@@ "$MBOX_XIM_SOCKET" &' in script
 assert 'export XMODIFIERS=@im=mbox' in script
 assert 'GTK_IM_MODULE=mbox' in script and 'GTK_IM_MODULE_FILE=@@IM_CACHE@@' in script
 selector = (root/'programs/mbox/im-auto.c').read_text()
-assert 'GDK_IS_WAYLAND_DISPLAY' in selector and '? "wayland" : "xim"' in selector
+assert 'GDK_IS_WAYLAND_DISPLAY' in selector and '? "mbox-wayland" : "xim"' in selector
+module = (root/'modules/nixos/mbox.nix').read_text()
+assert '../../patches/mbox-gtk-caret-commit.patch' in module
+assert 'wayland-scanner private-code' in module
+assert 'im-mbox-wayland.so' in module
+caret_patch = (root/'patches/mbox-gtk-caret-commit.patch').read_text()
+assert 'global->current == context && context_wayland->enabled' in caret_patch
+assert 'notify_cursor_location (context_wayland)' in caret_patch
+assert 'commit_state (context_wayland)' in caret_patch
 assert 'kill -KILL "$xim"' in script and 'wait "$xim"' in script
 assert 'pkgs.xcb-imdkit' in module and '${guestXim}/bin/mbox-xim' in module
 xim_derivation = module.split('  guestXim = ', 1)[1].split('  clipboardDesktop = ', 1)[0]

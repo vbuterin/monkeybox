@@ -365,16 +365,34 @@ let
   });
 
   guestImAuto = pkgs.runCommandCC "mbox-gtk-im" {
-    nativeBuildInputs = [ pkgs.pkg-config ];
+    nativeBuildInputs = [ pkgs.pkg-config pkgs.wayland-scanner ];
     buildInputs = [ pkgs.gtk3 pkgs.wayland ];
   } ''
     mkdir -p $out/lib
+    # Rebuild only GTK's Wayland IM module against the app's GTK ABI. Do not
+    # replace Firefox, GTK itself, or the host input-method configuration.
+    tar -xf ${pkgs.gtk3.src} --strip-components=1
+    patch --fuzz=0 -p1 < ${../../patches/mbox-gtk-caret-commit.patch}
+    cp modules/input/imwayland.c im-mbox-wayland.c
+    substituteInPlace im-mbox-wayland.c \
+      --replace-fail '#include "config.h"' '#define GETTEXT_PACKAGE "gtk30"' \
+      --replace-fail '#include "gtk/gtkintl.h"' '#define GTK_LOCALEDIR ""' \
+      --replace-fail 'NC_("input method menu", "Wayland")' '"Monkeybox Wayland"' \
+      --replace-fail '"gdk/wayland/gdkwayland.h"' '<gdk/gdkwayland.h>' \
+      --replace-fail '"wayland"' '"mbox-wayland"' \
+      --replace-fail 'GtkIMContextWayland' 'GtkIMContextMboxWayland'
+    protocol=${pkgs.wayland-protocols}/share/wayland-protocols/unstable/text-input/text-input-unstable-v3.xml
+    wayland-scanner client-header "$protocol" text-input-unstable-v3-client-protocol.h
+    wayland-scanner private-code "$protocol" text-input-protocol.c
     imFlags=$(pkg-config --cflags --libs gtk+-3.0 wayland-client)
+    $CC -shared -fPIC -I. im-mbox-wayland.c text-input-protocol.c \
+      $imFlags -o $out/lib/im-mbox-wayland.so
     $CC -shared -fPIC -Wall -Wextra -Wno-unused-parameter \
       ${../../programs/mbox/im-auto.c} $imFlags -o $out/lib/im-mbox.so
     # Keep GTK's standard modules available, plus the backend-aware selector.
     cat ${pkgs.gtk3}/lib/gtk-3.0/3.0.0/immodules.cache > $out/immodules.cache
     printf '\n"%s/lib/im-mbox.so"\n"mbox" "Monkeybox" "gtk30" "" ""\n' "$out" >> $out/immodules.cache
+    printf '\n"%s/lib/im-mbox-wayland.so"\n"mbox-wayland" "Monkeybox Wayland" "gtk30" "" ""\n' "$out" >> $out/immodules.cache
   '';
 
   guestXim = pkgs.runCommandCC "mbox-xim" {
@@ -421,9 +439,14 @@ let
     esac
   '';
 
+  # Only the private bridge uses this build. Host playback policy may move its
+  # tunnel to a new output; microphone tunnels retain their no-move restriction.
+  bridgePulse = pkgs.pulseaudio.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ../../patches/mbox-pulse-playback-move.patch ];
+  });
   audioHost = pkgs.writeShellScript "mbox-audio-host" ''
     exec ${pkgs.python3}/bin/python3 ${../../programs/mbox/audio-host.py} \
-      ${pkgs.pulseaudio}/bin/pulseaudio ${pkgs.pulseaudio}/bin/pactl \
+      ${bridgePulse}/bin/pulseaudio ${pkgs.pulseaudio}/bin/pactl \
       ${pkgs.dbus}/bin/dbus-run-session "$@"
   '';
 

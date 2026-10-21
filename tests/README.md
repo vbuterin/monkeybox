@@ -1,5 +1,30 @@
 # Tests
 
+## Focus caret and playback-device switching
+
+`mbox-audio.py --runtime PULSEAUDIO PACTL` uses private servers/null devices.
+Use the bridge's patched Pulse executable: stock Pulse intentionally fails the
+playback-move assertion. It verifies moves to headphones and back, and rejects
+moving granted microphone capture to a monitor. It does not exercise Bluetooth
+hardware or the host's automatic routing policy.
+
+`mbox-firefox-caret.py SWAY FIREFOX WTYPE TEST_IM IM_CACHE` uses disposable
+profiles and headless Sway, never live input. Build its private IM acknowledgement
+fixture with the input-method-v2 XML from Sway/wlroots' protocol source:
+
+```sh
+wayland-scanner client-header "$IM_V2_XML" im-protocol.h
+wayland-scanner private-code "$IM_V2_XML" im-protocol.c
+cc -I. tests/mbox-test-im.c im-protocol.c $(pkg-config --cflags --libs wayland-client) -o test-im
+```
+
+Pass `test-im` as TEST_IM and the packaged guest `immodules.cache` as IM_CACHE.
+Pass `-` instead of the cache for the stock-GTK negative control. On Firefox
+156.0.1 / GTK 3.24.52 that control fails because only the previous field's
+rectangle is published. The patched module publishes the corrected rectangle
+in the same focus epoch. This checks protocol geometry, not a visible popup.
+
+
 From the repository root:
 
 ```sh

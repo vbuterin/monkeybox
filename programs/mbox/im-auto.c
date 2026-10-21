@@ -20,7 +20,7 @@ G_MODULE_EXPORT GtkIMContext *im_module_create(const gchar *id) {
     selecting = TRUE;
     GtkIMContext *context = gtk_im_multicontext_new();
     gtk_im_multicontext_set_context_id(GTK_IM_MULTICONTEXT(context),
-        GDK_IS_WAYLAND_DISPLAY(gdk_display_get_default()) ? "wayland" : "xim");
+        GDK_IS_WAYLAND_DISPLAY(gdk_display_get_default()) ? "mbox-wayland" : "xim");
     selecting = FALSE;
     return context;
 }

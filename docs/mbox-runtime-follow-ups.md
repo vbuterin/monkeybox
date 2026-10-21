@@ -31,25 +31,45 @@ Publishing/pinning/rebuilding Monkeybox is required to replace the installed
 microsandbox executable. No runtime databases are repaired automatically, and
 no live processes are stopped by the patch installation.
 
-## Open: playback after changing output device
+## Playback after changing output device: component fix
 
 User report: launch Firefox, then switch the host audio output to Bluetooth
 AirPods. Firefox playback does not follow the switch; relaunching Firefox
-restores playback. Not yet reproduced in a private component test.
+restores playback. Reproduced the routing restriction with two private Pulse
+null sinks: the original tunnel explicitly sets `no_move=true` and rejects
+`move-sink-input`. `mbox-pulse-playback-move.patch` changes only playback to
+`no_move=false`; microphone capture stays pinned. The bridge uses a private
+patched Pulse package, not a replacement host daemon.
 
-Investigate whether the private playback tunnel remains bound to the output
-selected at startup. Test default-sink changes, device removal/reconnection,
-and two concurrent app VMs. Preserve playback/capture separation: following a
-playback output change must not grant microphone access or silently change a
-microphone grant. No live audio routing changes made during diagnosis.
+The runtime regression fails with the stock tunnel and passes with the patched
+module: playback moves to the second output and back; microphone moves to an
+output monitor remain forbidden. Existing isolation/readiness tests also pass.
+This permits the host session policy to move playback; changing a Pulse default
+alone is not a universal promise that existing streams move. Actual
+PipeWire/WirePlumber AirPods switching, removal/reconnection, audible continuity,
+and two simultaneous VMs still require host validation. No live routing changed.
 
-## Open: Firefox candidate geometry across text fields
+## Firefox candidate geometry across text fields: component fix
 
 Signal candidate placement is now consistently correct in user testing.
 Firefox sometimes temporarily anchors candidates at the preceding text field,
-not at (0,0). Determine whether the application publishes the new rectangle
-late or the bridge retains previous state. Capture geometry transition logs
-without message contents before choosing a fix.
+not at (0,0). Reproduced with Firefox 156.0.1 on private headless Sway and a
+throwaway two-textarea page. GTK 3.24.52 sends the preceding rectangle during
+focus-in; `set_cursor_location` then updates its cache without committing it.
+The stale rectangle is therefore already present on the application protocol.
+
+`mbox-gtk-caret-commit.patch` publishes a changed cursor rectangle immediately
+when that context is current/enabled. The guest builds only the GTK Wayland IM
+module from the pinned GTK source as `mbox-wayland`, with a distinct GType name;
+`im-auto.c` selects it on Wayland and still selects XIM on X11. No host GTK or
+Firefox package replacement is needed. The standard modules remain in the
+private cache for compatibility.
+
+`mbox-firefox-caret.py` fails on stock GTK (one old rectangle per focus epoch),
+and passes with the patched selector/module (11 transitions tested, each
+receiving the corrected rectangle in the same epoch). Private GTK X11/Wayland
+initialization tests also pass. This is protocol evidence, not a rebuilt-VM or
+actual Fcitx candidate-window validation.
 
 ## Compose validation
 
