@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <xkbcommon/xkbcommon-compose.h>
 #include <wayland-client-protocol.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
@@ -34,6 +35,33 @@ int main(void) {
     static const struct wlr_keyboard_impl impl = { .name = "test" };
     wlr_keyboard_init(&keyboard, &impl, "test");
     assert(wlr_keyboard_set_keymap(&keyboard, original));
+    /* Host compose:ralt must survive the actual parent-keymap import. No guest
+     * US-only replacement and no virtual input on the live desktop. */
+    struct xkb_rule_names names = { .layout = "us", .options = "compose:ralt" };
+    struct xkb_keymap *host = xkb_keymap_new_from_names(context, &names, 0);
+    assert(host);
+    struct xkb_state *host_state = xkb_state_new(host);
+    xkb_keycode_t ralt = xkb_keymap_key_by_name(host, "RALT");
+    assert(xkb_state_key_get_one_sym(host_state, ralt) == XKB_KEY_Multi_key);
+    char *map = xkb_keymap_get_as_string(host, XKB_KEYMAP_FORMAT_TEXT_V1);
+    FILE *mapfile = tmpfile(); assert(mapfile && map);
+    size_t maplen = strlen(map) + 1;
+    assert(fwrite(map, 1, maplen, mapfile) == maplen && fflush(mapfile) == 0);
+    mbox_keymap(&keyboard, WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, fileno(mapfile), maplen);
+    assert(xkb_state_key_get_one_sym(keyboard.xkb_state, ralt) == XKB_KEY_Multi_key);
+    struct xkb_compose_table *table = xkb_compose_table_new_from_locale(context, "en_US.UTF-8", 0);
+    assert(table);
+    struct xkb_compose_state *compose = xkb_compose_state_new(table, 0); assert(compose);
+    xkb_compose_state_feed(compose, xkb_state_key_get_one_sym(keyboard.xkb_state, ralt));
+    xkb_compose_state_feed(compose, XKB_KEY_apostrophe);
+    xkb_compose_state_feed(compose, XKB_KEY_e);
+    assert(xkb_compose_state_get_status(compose) == XKB_COMPOSE_COMPOSED);
+    char composed[16]; xkb_compose_state_get_utf8(compose, composed, sizeof(composed));
+    assert(strcmp(composed, "é") == 0);
+    xkb_compose_state_unref(compose); xkb_compose_table_unref(table);
+    free(map); fclose(mapfile); xkb_state_unref(host_state); xkb_keymap_unref(host);
+    assert(wlr_keyboard_set_keymap(&keyboard, original));
+    puts("PASS: host Right Alt Compose survives guest keymap import; Compose apostrophe e produces é");
     struct wl_listener listener = { .notify = on_key };
     wl_signal_add(&keyboard.events.key, &listener);
     wlr_keyboard_notify_modifiers(&keyboard, 1, 0, 0, 0);

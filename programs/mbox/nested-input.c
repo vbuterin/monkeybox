@@ -20,6 +20,7 @@ struct mbox_input {
     struct wl_surface *entered;
     struct wl_event_source *caret_timer;
     struct mbox_caret last_caret;
+    const char *caret_reason;
     struct wl_registry *registry;
     struct zwp_text_input_manager_v3 *manager;
     struct zwp_text_input_v3 *text;
@@ -32,6 +33,7 @@ static int mbox_update_parent_caret(void *data) {
     struct mbox_input *input = data;
     struct mbox_caret caret = {0};
     bool updated = false;
+    const char *reason = "missing-or-invalid-record";
     int64_t now = mbox_caret_now();
     if (input->text && input->entered &&
             mbox_caret_read(getenv("MBOX_CARET_FILE"), &caret, sizeof(caret)) &&
@@ -39,6 +41,7 @@ static int mbox_update_parent_caret(void *data) {
             memchr(caret.output, '\0', sizeof(caret.output)) && caret.output[0] &&
             caret.x >= 0 && caret.y >= 0 && caret.width >= 0 && caret.height >= 0 &&
             caret.x <= 65536 && caret.y <= 65536 && caret.width <= 65536 && caret.height <= 65536) {
+        reason = "output-not-entered";
         caret.time_ms = 0; /* timestamps must not cause redundant protocol commits */
         struct wlr_wl_output *output;
         wl_list_for_each(output, &input->backend->outputs, link) {
@@ -51,9 +54,14 @@ static int mbox_update_parent_caret(void *data) {
                     input->last_caret = caret;
                 }
                 updated = true;
+                reason = "valid";
                 break;
             }
         }
+    }
+    if (getenv("MBOX_CARET_DEBUG") && (!input->caret_reason || strcmp(input->caret_reason, reason))) {
+        fprintf(stderr, "mbox caret: parent %s\n", reason);
+        input->caret_reason = reason;
     }
     if (!updated && input->text && input->entered && input->last_caret.output[0]) {
         /* Never retain another field/window's caret after focus/disable. */

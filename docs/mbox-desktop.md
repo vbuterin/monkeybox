@@ -52,7 +52,15 @@ NoSymbol press/release, without replacing a keymap or pressing modifiers.
 Initialization is bounded; a missing context or focus change drops the commit.
 XIM commits over 16 KiB are refused to stay inside protocol encoding limits.
 
-Candidate UI stays on the host. Guest Sway forwards the focused application's
+Candidate UI stays on the host. This also covers host IME popups used while
+composing; there is no separate Compose candidate-position channel. Ordinary
+XKB Compose sequences generally do not show a candidate window. Host Sway's
+`xkb_options compose:ralt` is inherited through the parent keymap by native and
+nested guests; do not replace it with a guest-only US keymap. Right Alt then
+ceases to be AltGr. A keymap-import regression verifies `Multi_key` and the
+Compose, apostrophe, e → é sequence without touching the live desktop.
+
+Guest Sway forwards the focused application's
 text-input-v3 cursor rectangle, including scene/window offsets and nested output
 scale, into the parent output surface. In this guest-only mode, Sway acknowledges
 text-input commits with `done(current_serial)` even without a local input method;
@@ -60,12 +68,22 @@ Electron otherwise waits indefinitely before sending its real caret. Rectangles
 sent after the initial enable commit are accepted, not just enable-time fields.
 No text/preedit events are synthesized by these acknowledgements. If a local
 input method exists, its normal acknowledgement path remains authoritative.
-Geometry is refreshed every 30 ms so
+Geometry is published immediately on text-input state changes and refreshed every
+30 ms so
 moving/resizing a window also moves the candidate anchor. Parent HiDPI scaling
 is not applied twice. For X11, the bridge reads XIM spot-location attributes,
 translates child-window coordinates into top-level pixels, and scales them to
 the focused satellite surface. This fallback is restricted to satellite's client
 PID. No host pointer position or host desktop queries are used.
+
+Only the configured `seat0` publishes the shared geometry record; an unfocused
+auxiliary seat cannot overwrite it. For intermittent fallback diagnosis, pass
+`-e MBOX_CARET_DEBUG=1` to **mbox** (before `--`, not as an application argument).
+It logs transition reasons (`no-keyboard-focus`, `surface-not-in-scene`,
+`no-enabled-caret`, `invalid-or-off-output-caret`, `output-not-entered`, or invalid
+record) without logging surrounding text or message contents. These diagnostics
+are opt-in. Timing improvements do not establish that every intermittent Signal
+fallback is fixed; capture a failing transition before attributing it to a cause.
 
 Applications must actually publish a caret (text-input-v3 or XIM spot location).
 Missing/disabled/stale geometry resets to the top-left fallback; rotated nested

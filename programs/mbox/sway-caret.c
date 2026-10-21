@@ -23,9 +23,11 @@ static int mbox_update_caret(void *data) {
     struct sway_input_method_relay *relay = data;
     struct wlr_surface *focus = relay->seat->wlr_seat->keyboard_state.focused_surface;
     struct mbox_caret result = { .time_ms = mbox_caret_now() };
+    const char *reason = focus ? "surface-not-in-scene" : "no-keyboard-focus";
     struct mbox_caret_scene find = { .surface = focus };
     if (focus) wlr_scene_node_for_each_buffer(&root->root_scene->tree.node, mbox_find_surface, &find);
     if (find.found) {
+        reason = "no-enabled-caret";
         bool valid = false;
         struct sway_text_input *text;
         wl_list_for_each(text, &relay->text_inputs, link) {
@@ -56,6 +58,7 @@ static int mbox_update_caret(void *data) {
                     mbox_caret_now(), &result);
             }
         }
+        if (valid) reason = "invalid-or-off-output-caret";
         if (valid && result.width >= 0 && result.height >= 0 &&
                 llabs((long long)result.x) <= 65536 && llabs((long long)result.y) <= 65536 &&
                 result.width <= 65536 && result.height <= 65536) {
@@ -69,11 +72,30 @@ static int mbox_update_caret(void *data) {
                  * The parent's own HiDPI scale must NOT be multiplied again. */
                 if (mbox_caret_to_output(&result, find.x, find.y, bounds.x, bounds.y, output->scale)) {
                     snprintf(result.output, sizeof(result.output), "%s", output->name);
+                    reason = "valid";
                 }
             }
         }
     }
-    mbox_caret_write(getenv("MBOX_CARET_FILE"), &result, sizeof(result));
-    wl_event_source_timer_update(relay->mbox_caret_timer, 30);
+    /* This invocation configures seat0. A helper/virtual keyboard can create
+     * another seat: its empty focus must never overwrite seat0's record. */
+    if (strcmp(relay->seat->wlr_seat->name, "seat0") == 0) {
+        mbox_caret_write(getenv("MBOX_CARET_FILE"), &result, sizeof(result));
+        if (getenv("MBOX_CARET_DEBUG")) {
+            static const char *previous;
+            if (!previous || strcmp(previous, reason) != 0) {
+                fprintf(stderr, "mbox caret: guest %s\n", reason);
+                previous = reason;
+            }
+        }
+    }
+    if (relay->mbox_caret_timer) wl_event_source_timer_update(relay->mbox_caret_timer, 30);
     return 0;
+}
+/* Publish at protocol/focus boundaries, not only on a 30 ms timer. The timer
+ * remains necessary for scene movement without new text-input state. */
+static bool mbox_caret_state_changed(struct sway_text_input *text) {
+    bool handled = mbox_caret_ack(text->input, text->relay->input_method != NULL);
+    if (handled) mbox_update_caret(text->relay);
+    return handled;
 }

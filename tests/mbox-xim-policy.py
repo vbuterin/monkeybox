@@ -28,7 +28,10 @@ state = (root/'programs/mbox/sway-caret-state.h').read_text()
 assert 'mbox_caret_has_rectangle(text->input, focus)' in caret
 assert 'input->current_enabled' in state and 'input->current.features &' in state
 assert 'wlr_text_input_v3_send_done(input)' in state
-assert patch.count('mbox_caret_ack(text_input->input,') == 3
+assert patch.count('mbox_caret_state_changed(text_input)') == 3
+assert 'if (handled) mbox_update_caret(text->relay)' in caret
+assert 'strcmp(relay->seat->wlr_seat->name, "seat0") == 0' in caret
+assert 'MBOX_CARET_DEBUG' in caret and 'MBOX_CARET_DEBUG' in relay
 assert 'mbox-caret-protocol-test' in module and 'sway/input/sway-caret-state.h' in module
 assert 'input->entered' in relay and 'output->surface == input->entered' in relay
 assert 'now - caret.time_ms <= 250' in relay
