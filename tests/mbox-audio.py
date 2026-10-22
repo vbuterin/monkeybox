@@ -35,6 +35,51 @@ except ValueError:
     pass
 else:
     raise AssertionError('monitor allowed as microphone')
+# Missing monitor metadata is unknown, not permission to capture host output.
+# Exercise main's selection path without opening a real audio device/server.
+with tempfile.TemporaryDirectory() as directory:
+    argv = ['audio-host.py', 'pulse', 'pactl', 'dbus-run-session',
+            'unix:/unused', '0', '1', directory]
+    with patch.object(audio.sys, 'argv', argv), \
+            patch.object(audio.subprocess, 'check_output', side_effect=[
+                'unknown-source\n', json.dumps([{'name': 'unknown-source'}])]), \
+            patch.object(audio.subprocess, 'Popen', side_effect=AssertionError(
+                'source with missing monitor metadata reached daemon startup')) as spawn:
+        try:
+            audio.main()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('source with missing monitor metadata accepted')
+        spawn.assert_not_called()
+    # Explicit non-monitor markers retain compatibility. Stop at mocked Popen,
+    # before any real process, signal handler, or readiness loop is involved.
+    class StartupReached(Exception):
+        pass
+    for marker in (None, 4294967295):
+        with patch.object(audio.sys, 'argv', argv), \
+                patch.object(audio.subprocess, 'check_output', side_effect=[
+                    'mic\n', json.dumps([{'name': 'mic', 'monitor_of_sink': marker}])]), \
+                patch.object(audio.subprocess, 'Popen', side_effect=StartupReached) as spawn:
+            try:
+                audio.main()
+            except StartupReached:
+                pass
+            else:
+                raise AssertionError('explicit non-monitor marker did not reach startup')
+            spawn.assert_called_once()
+    for marker in (0, 7, 'unknown'):
+        with patch.object(audio.sys, 'argv', argv), \
+                patch.object(audio.subprocess, 'check_output', side_effect=[
+                    'source\n', json.dumps([{'name': 'source', 'monitor_of_sink': marker}])]), \
+                patch.object(audio.subprocess, 'Popen', side_effect=AssertionError('monitor accepted')) as spawn:
+            try:
+                audio.main()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('invalid monitor marker accepted')
+            spawn.assert_not_called()
 source = (root / 'programs/mbox/mbox.sh.in').read_text()
 assert '--vsock "$pulse_socket:5002"' not in source
 assert '--vsock "$AUDIO_RUNTIME/pulse:5002"' in source

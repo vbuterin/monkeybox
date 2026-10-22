@@ -95,8 +95,9 @@ def main():
                                                      env=env, text=True, timeout=5))
         selected = next((s for s in sources if s['name'] == source), None)
         # Pulse uses UINT32_MAX (or null in some implementations) for non-monitors.
-        if selected is None or selected.get('monitor_of_sink') not in (None, 4294967295):
-            raise ValueError('default source is a monitor, not a microphone; select a microphone on the host')
+        # Absent metadata is not the same as an explicit non-monitor marker.
+        if selected is None or 'monitor_of_sink' not in selected or selected['monitor_of_sink'] not in (None, 4294967295):
+            raise ValueError('default source is a monitor or lacks monitor metadata; select a microphone on the host')
     config = runtime / 'default.pa'
     config.write_text(configuration(server, playback == '1', microphone == '1', runtime, source))
     daemon_config = runtime / 'daemon.conf'
