@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Narrow legacy override repair; no actual host chown or live state."""
+import errno
 import importlib.util
 import os
 from pathlib import Path
 import struct
 import tempfile
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('repair', Path(__file__).resolve().parents[1]/'programs/mbox/repair-home-metadata.py')
 m = importlib.util.module_from_spec(spec)
@@ -40,4 +42,26 @@ with tempfile.TemporaryDirectory() as tmp:
         os.setxattr(home/'.pi', m.KEY, value)
         m.main(home)
         assert os.getxattr(home/'.pi', m.KEY) == value
-print('PASS: fixed directories only, symlinks not followed, data/other xattrs/nonroot/unknown overrides preserved')
+    # Another launcher may finish the same repair between getxattr/removexattr.
+    target = home/'.pi'
+    os.setxattr(target, m.KEY, root_override)
+    remove = os.removexattr
+    def concurrent_remove(fd, key):
+        remove(fd, key)  # the other launcher wins
+        remove(fd, key)  # our launcher observes ENODATA
+    with mock.patch.object(m.os, 'removexattr', side_effect=concurrent_remove):
+        m.main(home)
+    assert m.KEY not in os.listxattr(target)
+    assert os.getxattr(target, 'user.fixture') == b'keep'
+    # Do not hide permission or I/O failures under the concurrency exception.
+    for code in (errno.EACCES, errno.EIO):
+        os.setxattr(target, m.KEY, root_override)
+        with mock.patch.object(m.os, 'removexattr', side_effect=OSError(code, 'fixture')):
+            try:
+                m.main(home)
+            except OSError as error:
+                assert error.errno == code
+            else:
+                raise AssertionError('unexpected removal failure was swallowed')
+        assert os.getxattr(target, m.KEY) == root_override
+print('PASS: narrow metadata repair, concurrent removal tolerated, other errors preserved')

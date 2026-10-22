@@ -27,7 +27,14 @@ def repair(fd):
     if version == 1 and uid == 0 and stat.S_ISDIR(mode) and os.getuid() != 0:
         # Removing only this legacy override restores mount uid/gid mapping and
         # actual caller-owned mode. Preserve all other xattrs and guest data.
-        os.removexattr(fd, KEY)
+        try:
+            os.removexattr(fd, KEY)
+        except OSError as e:
+            # Concurrent launches may both read the legacy override before one
+            # removes it. Already absent is success; preserve every other error.
+            if e.errno == errno.ENODATA:
+                return
+            raise
         print("mbox: repaired legacy guest-root metadata on a private state directory", file=sys.stderr)
 
 def main(home):
