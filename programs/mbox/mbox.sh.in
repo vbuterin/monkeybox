@@ -18,6 +18,8 @@ MSB="${MSB_PATH:-@@MSB@@}"   # overridable so the argument assembly can be teste
 IMAGE="@@IMAGE@@"
 CPUS="@@CPUS@@"
 MEMORY="@@MEMORY@@"
+SWAP_MIB="@@SWAP_MIB@@"
+SWAP_FIRMWARE="@@SWAP_FIRMWARE@@"
 ENV_BIN="@@ENV_BIN@@"
 GUEST_BASH="@@GUEST_BASH@@"
 CACERT="@@CACERT@@"
@@ -119,6 +121,10 @@ Options:
       --image IMAGE        Override the base image for this sandbox
       --cpus N             vCPU limit
   -m, --memory SIZE        Memory limit, e.g. 4096M
+  -s, --swap              Opt in to swap-enabled firmware and guest disk swap.
+      --swap-mib N        Size used with -s, in MiB (64..65536; default 8192).
+                          Setting a size alone does NOT enable swap.
+                          Without -s, always use the baseline release firmware.
       --ephemeral          Back the home with tmpfs: everything in it is discarded
       --fresh              Tear down the existing sandbox and build a new one
       --dry-run            Print the msb invocation instead of running it
@@ -156,6 +162,7 @@ case "${1:-}" in
 esac
 
 DRY_RUN=0
+SWAP_ENABLED=0
 FRESH=0
 EPHEMERAL=0
 CLIPBOARD=0
@@ -181,7 +188,7 @@ while [ $# -gt 0 ]; do
         for ((i=0; i<${#cluster}; i++)); do
             letter="${cluster:i:1}"
             case "$letter" in
-                a|r|v|i|c|l|h) ;;
+                a|r|v|i|c|l|s|h) ;;
                 p|n|P|f|e|C|m)
                     if [ "$i" -ne "$((${#cluster}-1))" ]; then
                         echo "mbox: -$letter takes arguments and must be last in '$1'" >&2
@@ -195,7 +202,7 @@ while [ $# -gt 0 ]; do
         set -- "${cluster_args[@]}" "$@"
     fi
     case "$1" in
-        -p|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|-C|--nix-cache)
+        -p|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache)
             if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = -* ]]; then
                 echo "mbox: $1 requires a value (see mbox --help)" >&2
                 exit 2
@@ -228,6 +235,13 @@ while [ $# -gt 0 ]; do
         --image) IMAGE="$2"; shift 2 ;;
         --cpus) CPUS="$2"; shift 2 ;;
         -m | --memory) MEMORY="$2"; shift 2 ;;
+        -s | --swap) SWAP_ENABLED=1; shift ;;
+        --swap-mib)
+            if ! [[ "$2" =~ ^[1-9][0-9]{1,4}$ ]] ||
+               [ "$2" -lt 64 ] || [ "$2" -gt 65536 ]; then
+                echo 'mbox: --swap-mib must be 64..65536' >&2; exit 2
+            fi
+            SWAP_MIB="$2"; shift 2 ;;
         -c | --clipboard)
             if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
                 echo 'mbox: --clipboard takes no value; use -- before a numeric command, or ./N for a project' >&2
@@ -280,6 +294,15 @@ if [ "$CLIPBOARD" = 1 ]; then
         echo 'mbox: --clipboard currently requires the default caller identity' >&2; exit 2
     fi
 fi
+# Firmware selection is strictly per invocation, never inferred from memory
+# size, previous engine state, or an inherited MSB_LIBKRUNFW_PATH.
+if [ "$SWAP_ENABLED" = 1 ]; then
+    if [ -z "$SWAP_FIRMWARE" ] || [ ! -f "$SWAP_FIRMWARE" ]; then
+        echo 'mbox: -s requires a packaged, compatible swap-enabled firmware; none is configured' >&2
+        exit 2
+    fi
+    export MSB_LIBKRUNFW_PATH="$SWAP_FIRMWARE"
+fi
 PROJECT="$(realpath -m -- "${PROJECT_DIR:-$PWD}")"
 SANDBOX="mbox-$(printf '%s' "$PROJECT" | sha256sum | cut -c1-12)"
 PROJECT_STATE="$STATE_ROOT/projects$PROJECT"
@@ -319,6 +342,7 @@ CAMERA_RUNTIME=""
 AUDIO_RUNTIME=""
 AUDIO_PID=""
 RUN_PID=""
+MANAGEMENT_ID=""
 cancel_run() {
     trap '' INT TERM
     if [ -n "$RUN_PID" ]; then
@@ -373,9 +397,12 @@ cleanup_nix_cache() {
 }
 # Install once, before allocating either resource. Attempt both cleanups even
 # if one directory cannot be removed; neither feature can clobber the other.
-trap 'cleanup_desktop || true; cleanup_nix_cache' EXIT
+trap 'cleanup_desktop || true; cleanup_nix_cache; if [ -n "$MANAGEMENT_ID" ]; then @@MANAGE@@ unregister "$MANAGEMENT_ID" || true; fi' EXIT
 trap 'cancel_run 130' INT
 trap 'cancel_run 143' TERM
+# Management already pins/kills this launcher's descendants. Never stop by
+# sandbox name here: another invocation may have replaced that name meanwhile.
+trap 'exit 138' USR1
 if [ ${#NIX_CACHE_PATHS[@]} -gt 0 ]; then
     if [ "$SHARE_STORE" != 1 ]; then
         echo 'mbox: --nix-cache requires programs.mbox.shareNixStore = true; the guest Nix executable still runs from the read-only host store' >&2
@@ -752,6 +779,14 @@ if [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
     DESKTOP_ARGS+=(--vsock "$AUDIO_RUNTIME/pulse:5002")
 fi
 
+# Only the fixed guest bootstrap gets root. It configures disk swap before dropping
+# to exactly the identity that msb would otherwise use for the application.
+APP_IDENTITY="${RUN_AS_SPEC:-$MBOX_UID:$MBOX_GID}"
+if [ "$RUN_AS_CALLER" != 1 ] && [ -z "$RUN_AS_SPEC" ]; then APP_IDENTITY="0:0"; fi
+if [ "$SWAP_ENABLED" = 1 ]; then
+    USER_ARGS=(--user=0:0)
+    MOUNTS+=(--mount-owned "/run/mbox-swap:kind=disk,size=$((SWAP_MIB + 256))M,nodev,nosuid,noexec")
+fi
 BASE_ARGS=(
     --name "$SANDBOX"
     "${USER_ARGS[@]}"
@@ -803,6 +838,10 @@ if [ ${#NIX_CACHE_PATHS[@]} -gt 0 ]; then
     INNER=("@@NIX_GUEST@@" "${INNER[@]}")
 fi
 
+if [ "$SWAP_ENABLED" = 1 ]; then
+    INNER=("@@GUEST_MEMORY@@" "$SWAP_MIB" "@@SWAP_TOOLS@@" "$APP_IDENTITY" "${INNER[@]}")
+fi
+
 TTY_ARGS=(-t)
 [ -t 1 ] || TTY_ARGS=(--no-tty)
 # A GUI application has no shell job to receive terminal Ctrl+C. Keep the
@@ -826,4 +865,11 @@ if [ "$FRESH" = 1 ]; then
     "$MSB" remove "$SANDBOX" --force >/dev/null 2>&1 || true
 fi
 
+if [ "$DRY_RUN" != 1 ]; then
+    # Best-effort desktop registration; headless hosts may have no user runtime.
+    MANAGEMENT_ID="$(@@MANAGE@@ register "$$" "$SANDBOX" "$MSB" "$MSB_HOME" "$MSB_LIBKRUNFW_PATH" "$MEMORY" "${CMD[0]:-shell}")" || {
+        MANAGEMENT_ID=""
+        echo 'mbox: instance management registration unavailable' >&2
+    }
+fi
 run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} --replace "$IMAGE" -- "${INNER[@]}"

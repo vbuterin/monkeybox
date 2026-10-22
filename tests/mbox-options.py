@@ -17,6 +17,22 @@ for args in (['--cpus'], ['--cpus', '-c']):
     assert result.returncode == 2 and b'requires a value' in result.stderr
 result = subprocess.check_output(['bash', '-eu', '-c', parser, 'test', '--', 'bash', '-c', 'true'])
 assert result.split(b'\0')[:-1] == [b'0', b'0', b'2', b'bash', b'-c', b'true']
+# Swap is an explicit bounded per-launch override; do not accept shell numbers
+# with octal ambiguity, suffixes, overflow, negatives or missing arguments.
+swap_parser = 'SWAP_MIB=8192\n' + parser + '\nprintf "ENABLED=%s SWAP=%s" "$SWAP_ENABLED" "$SWAP_MIB"'
+for size in ('64', '8192', '65536'):
+    result = subprocess.check_output(['bash', '-eu', '-c', swap_parser, 'test', '--swap-mib', size])
+    assert result.endswith(('ENABLED=0 SWAP=' + size).encode())
+for args in (['--swap-mib'], *(['--swap-mib', value] for value in
+             ('0', '-1', '63', '65537', '08', '8G', '999999999999999999999', '$(false)'))):
+    result = subprocess.run(['bash', '-eu', '-c', swap_parser, 'test', *args], capture_output=True)
+    assert result.returncode == 2
+for args in (['-s'], ['--swap'], ['-avics'], ['-savc'], ['--swap-mib', '8192', '-s']):
+    result = subprocess.check_output(['bash', '-eu', '-c', swap_parser, 'test', *args])
+    assert result.endswith(b'ENABLED=1 SWAP=8192')
+for args in ([], ['--', 'echo', '-s'], ['echo', '-s']):
+    result = subprocess.check_output(['bash', '-eu', '-c', swap_parser, 'test', *args])
+    assert result.endswith(b'ENABLED=0 SWAP=8192')
 # Every permutation of the desktop cluster, plus repeated flags and ordering.
 import itertools
 cluster_parser = parser.replace('"$CLIPBOARD" "$WAYLAND" "$CPUS"',

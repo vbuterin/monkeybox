@@ -488,10 +488,25 @@ let
     MOUNTS
   '';
 
+  guestMemory = pkgs.writeShellScript "mbox-guest-memory" ''
+    exec ${pkgs.python3}/bin/python3 -I ${../../programs/mbox/guest-memory.py} "$@"
+  '';
+  managementSource = pkgs.writeText "mbox-manage.py" (builtins.replaceStrings
+    [ "@@GUEST_MEMORY@@" ] [ "${guestMemory}" ]
+    (builtins.readFile ../../programs/mbox/manage.py));
+  management = pkgs.writeShellScriptBin "mbox-manage" ''
+    exec ${pkgs.python3}/bin/python3 -I ${managementSource} "$@"
+  '';
+
   script = pkgs.writeShellScriptBin "mbox" (builtins.replaceStrings
     [
       "#!/usr/bin/env bash"
       "@@MSB@@"
+      "@@MANAGE@@"
+      "@@GUEST_MEMORY@@"
+      "@@SWAP_MIB@@"
+      "@@SWAP_FIRMWARE@@"
+      "@@SWAP_TOOLS@@"
       "@@NIX@@"
       "@@NIX_GUEST@@"
       "@@HOME_REPAIR@@"
@@ -534,6 +549,11 @@ let
     [
       "export PATH=${lib.makeBinPath [ pkgs.coreutils pkgs.gnugrep pkgs.gnused pkgs.gawk pkgs.findutils pkgs.util-linux ]}:$PATH"
       "${cfg.package}/bin/msb"
+      "${management}/bin/mbox-manage"
+      "${guestMemory}"
+      (toString cfg.swapMiB)
+      (if cfg.swapFirmwarePath == null then "" else cfg.swapFirmwarePath)
+      "${pkgs.util-linux}/bin"
       "${pkgs.nix}"
       "${nixGuest}"
       "${../../programs/mbox/repair-home-metadata.py}"
@@ -577,6 +597,31 @@ let
 in
 {
   options.programs.mbox = {
+    managementPackage = lib.mkOption { type = lib.types.package; readOnly = true; description = "Host-only instance management and diagnostics CLI."; };
+    swapFirmwarePath = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = "${pkgs.callPackage ../../packages/libkrunfw-swap { }}/lib/libkrunfw.so";
+      defaultText = "Monkeybox's pinned source-built libkrunfw 5.6.1 with CONFIG_SWAP=y";
+      description = ''
+        Immutable compatible swap-enabled libkrunfw path, selected ONLY with -s.
+        null makes -s fail explicitly and omits the swap firmware dependency.
+        Baseline runs always use release firmware, regardless of this option.
+      '';
+    };
+    swapMiB = lib.mkOption {
+      type = lib.types.ints.between 64 65536;
+      default = 8192;
+      description = ''
+        Guest disk-backed swap size in MiB when explicitly enabled with -s.
+        Configuring this option alone never enables swap. Uses a private sandbox-owned
+        ext4 virtual disk in MSB_HOME, with 256 MiB extra filesystem headroom.
+        Keep MSB_HOME on encrypted disk storage, outside guest directory grants.
+        Requires CONFIG_SWAP=y in compatible firmware (the bundled release lacks
+        it). Setup runs as guest root then drops to the application identity.
+        Storage remains until sandbox removal/replacement; deletion is not secure
+        erasure. No zram, host swap changes, or shared-directory swapfiles.
+      '';
+    };
     clipboardPackage = lib.mkOption { type = lib.types.package; readOnly = true; description = "Explicit Sway clipboard broker."; };
     enable = lib.mkEnableOption "Monkeybox host installation through the optional NixOS adapter";
 
@@ -920,4 +965,5 @@ in
   };
 
   config.programs.mbox.clipboardPackage = clipboard;
+  config.programs.mbox.managementPackage = management;
 }

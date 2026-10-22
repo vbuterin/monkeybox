@@ -9,9 +9,9 @@ in {
   inherit (evaluated) options config;
   package = pkgs.symlinkJoin {
     name = "monkeybox";
-    paths = [ cfg.wrapper cfg.clipboardPackage ];
+    paths = [ cfg.wrapper cfg.clipboardPackage cfg.managementPackage ];
     postBuild = "ln -s mbox $out/bin/monkeybox";
     meta.mainProgram = "mbox";
   };
-  inherit (cfg) wrapper clipboardPackage;
+  inherit (cfg) wrapper clipboardPackage managementPackage;
 }

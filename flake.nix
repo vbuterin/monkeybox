@@ -32,13 +32,14 @@
       test-fixture = fixture.wrapper;
       clipboard = base.clipboardPackage;
       microsandbox = pkgs.callPackage ./packages/microsandbox {};
+      libkrunfw-swap = pkgs.callPackage ./packages/libkrunfw-swap {};
     };
     apps.${system} = {
       default = { type = "app"; program = "${base.package}/bin/mbox"; };
       desktop = { type = "app"; program = "${desktop.package}/bin/mbox"; };
     };
     checks.${system}.policy = pkgs.runCommand "monkeybox-policy-tests" {
-      nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils ];
+      nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils pkgs.gnumake ];
     } ''
       cp -r ${pkgs.lib.fileset.toSource {
         root = ./.;
@@ -51,6 +52,9 @@
       python3 tests/mbox-network.py --assembly-only
       python3 tests/mbox-camera-host.py
       python3 tests/mbox-options.py
+      python3 tests/mbox-memory.py
+      python3 tests/mbox-manage.py
+      python3 tests/mbox-swap-package.py
       python3 tests/mbox-audio.py
       python3 tests/mbox-desktop-im.py
       python3 tests/mbox-xim-policy.py

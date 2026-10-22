@@ -29,7 +29,7 @@ in
 {
   imports = [ ./mbox.nix ];
   config = lib.mkIf config.programs.mbox.enable {
-    environment.systemPackages = with config.programs.mbox; [ wrapper clipboardPackage ];
+    environment.systemPackages = with config.programs.mbox; [ wrapper clipboardPackage managementPackage ];
     # Reuse the host's declared font choices, but copy bytes into the private image.
     programs.mbox.fontPackages = lib.mkDefault config.fonts.packages;
     # Copy declarative preferences, not host cache paths or impure conf.d includes.
