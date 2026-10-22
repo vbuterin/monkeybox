@@ -70,9 +70,26 @@ capture watchdog and normal TERM; synthetic frame/EOF/reverse-data tests remain
 passing. They open no physical camera, inject no desktop input and do not suspend
 the host. Real suspend/resume capture recovery is not proven. The monotonic
 watchdog does not count Linux suspend time itself; a post-resume stall/disconnect
-is a possible trigger, not an observed driver diagnosis. A camera failure still
-terminates this camera-enabled guest path; this patch prevents orphan capture,
-not seamless video-call recovery or automatic capture restart.
+is a possible trigger, not an observed driver diagnosis. This host-side patch
+prevents orphan capture, not seamless video-call recovery.
+
+A subsequent user's suspend/resume traceback confirmed a separate guest failure:
+`camera service ended` raised by the guest supervisor caused cleanup to terminate
+Signal. The guest supervisor now treats a camera-service exit after application
+startup as loss of camera availability, not a reason to terminate the application.
+It logs the failed component and exit code, clears portal grants, stops the private
+frame source/WirePlumber/PipeWire (revoking existing remote FDs), and reports
+`IsCameraPresent=false`. New camera requests fail as unavailable. The private
+session bus stays running if healthy; if the bus itself died, dependent application
+features can still fail, but the supervisor does not deliberately kill the app.
+Initial setup failures still abort launch. No daemon/capture reconnection is tried;
+relaunch the application to restore camera access.
+
+`tests/mbox-camera-guest-lifecycle.py` executes the actual supervisor with mocked
+process and IPC boundaries, checking each service failure, camera revocation,
+portal denial, preservation of the application and its exit status, and absence
+of restarts. This is not a real PipeWire/Signal or suspend/resume test. The new
+component-specific log is needed to identify the original stream failure.
 
 ## Backend constraints
 

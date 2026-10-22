@@ -24,9 +24,9 @@ async def main():
         def spawn(args, **kwargs):
             p = subprocess.Popen(args, env=daemon_env, stdin=subprocess.DEVNULL, **kwargs)
             children.append(p); return p
-        spawn([DBUS,'--config-file='+str(Path(DBUS).parents[1]/'share/dbus-1/session.conf'),
-               '--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']])
-        spawn([PW,'-c',CONFIG])
+        dbus = spawn([DBUS,'--config-file='+str(Path(DBUS).parents[1]/'share/dbus-1/session.conf'),
+                     '--nofork','--address='+env['DBUS_SESSION_BUS_ADDRESS']])
+        pipewire = spawn([PW,'-c',CONFIG])
         for _ in range(100):
             if any(p.poll() is not None for p in children): raise RuntimeError('camera daemon failed')
             if (runtime/'bus').is_socket() and (runtime/'pipewire-0').is_socket(): break
@@ -34,7 +34,7 @@ async def main():
         if not (runtime/'bus').is_socket() or not (runtime/'pipewire-0').is_socket():
             raise RuntimeError('camera startup timeout')
         # Policy/linking only: do not enumerate ALSA, Bluetooth or V4L2 devices.
-        spawn([WP,'--profile','policy'])
+        wireplumber = spawn([WP,'--profile','policy'])
         stream = socket.socket(socket.AF_VSOCK,socket.SOCK_STREAM)
         stream.settimeout(5); stream.connect((2,5004)); stream.settimeout(None)
         source = subprocess.Popen([SOURCE,'--stdin'],env=daemon_env,stdin=stream)
@@ -42,10 +42,15 @@ async def main():
         bus = await MessageBus(bus_address=env['DBUS_SESSION_BUS_ADDRESS'],negotiate_unix_fd=True).connect()
         await bus.request_name('org.freedesktop.portal.Desktop')
         granted = set()
+        camera_available = True
+        services = [('session bus', dbus), ('PipeWire', pipewire),
+                    ('WirePlumber', wireplumber), ('frame source', source)]
         loop = asyncio.get_running_loop()
         def handler(msg):
             if msg.message_type != MessageType.METHOD_CALL: return
             if msg.path == '/org/freedesktop/portal/desktop' and msg.interface == 'org.freedesktop.portal.Camera':
+                if not camera_available:
+                    return Message.new_error(msg,'org.freedesktop.portal.Error.NotAvailable','Camera stream ended; relaunch to grant capture again')
                 if msg.member == 'AccessCamera' and msg.signature == 'a{sv}':
                     token = msg.body[0].get('handle_token',Variant('s','camera')).value
                     if not isinstance(token,str) or not token or len(token)>128 or not all(c.isascii() and (c.isalnum() or c=='_') for c in token):
@@ -64,13 +69,16 @@ async def main():
                     # Send only a guest-local remote FD. Await send completion before
                     # closing our copy; repeated calls cannot leak descriptors.
                     async def send_remote():
+                        if not camera_available:
+                            await bus.send(Message.new_error(msg,'org.freedesktop.portal.Error.NotAvailable','Camera stream ended'))
+                            return
                         with socket.socket(socket.AF_UNIX) as remote:
                             remote.connect(str(runtime/'pipewire-0'))
                             await bus.send(Message.new_method_return(msg,'h',[0],unix_fds=[remote.fileno()]))
                     asyncio.create_task(send_remote())
                     return True
             if msg.interface == 'org.freedesktop.DBus.Properties' and msg.body and msg.body[0]=='org.freedesktop.portal.Camera':
-                props={'version':Variant('u',1),'IsCameraPresent':Variant('b',True)}
+                props={'version':Variant('u',1),'IsCameraPresent':Variant('b',camera_available)}
                 if msg.member=='GetAll': return Message.new_method_return(msg,'a{sv}',[props])
                 if msg.member=='Get' and len(msg.body)==2 and msg.body[1] in props:
                     return Message.new_method_return(msg,'v',[props[msg.body[1]]])
@@ -84,8 +92,41 @@ async def main():
         children.append(app)
         try:
             while app.poll() is None:
-                if any(p.poll() is not None for p in children[:-1]):
-                    raise RuntimeError('camera service ended')
+                failed = [(name, p.returncode) for name, p in services if p.poll() is not None]
+                if camera_available and failed:
+                    camera_available = False
+                    granted.clear()
+                    print('mbox: camera unavailable (' + ', '.join(f'{name} exited {code}' for name, code in failed)
+                          + '); keeping application open; relaunch to restore camera', file=sys.stderr, flush=True)
+                    # Revoke even already-issued PipeWire FDs by stopping the private
+                    # camera server. Keep the app and its session bus, not a stale
+                    # source or a background reconnect loop. Closing source stdin
+                    # propagates EOF through vsock to release host capture.
+                    capture_services = [source, wireplumber, pipewire]
+                    for p in capture_services:
+                        if p.poll() is None:
+                            try: p.terminate()
+                            except ProcessLookupError: pass
+                    deadline = loop.time() + 2
+                    while any(p.poll() is None for p in capture_services) and loop.time() < deadline:
+                        await asyncio.sleep(.05)
+                    for p in capture_services:
+                        if p.poll() is None:
+                            try: p.kill()
+                            except ProcessLookupError: pass
+                    # poll() reaps exited children; final cleanup also waits for
+                    # any delayed exits. Do not stall the app on blocked I/O.
+                    for p in capture_services: p.poll()
+                    if bus.connected:
+                        try:
+                            await bus.send(Message(path='/org/freedesktop/portal/desktop',
+                                interface='org.freedesktop.DBus.Properties', member='PropertiesChanged',
+                                message_type=MessageType.SIGNAL, signature='sa{sv}as',
+                                body=['org.freedesktop.portal.Camera', {'IsCameraPresent':Variant('b',False)}, []]))
+                        except Exception:
+                            # A concurrently lost bus must not turn camera failure
+                            # back into application termination.
+                            print('mbox: camera-unavailable notification failed', file=sys.stderr)
                 await asyncio.sleep(.1)
             return app.returncode
         finally: bus.disconnect()
