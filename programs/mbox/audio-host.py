@@ -20,6 +20,34 @@ def quote(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
+def is_non_monitor(source):
+    """Accept explicit non-monitor markers from pactl, never absence/guesswork.
+
+    PulseAudio pactl JSON calls this field monitor_source (a sink name or "").
+    Some providers expose the underlying libpulse monitor_of_sink index instead.
+    If both are present, both must explicitly describe a non-monitor.
+    """
+    if not isinstance(source, dict):
+        return False
+    name = source.get('name')
+    if not isinstance(name, str) or not name or name.endswith('.monitor'):
+        return False
+    known = False
+    if 'monitor_source' in source:
+        known = True
+        if source['monitor_source'] != '':
+            return False
+    if 'monitor_of_sink' in source:
+        known = True
+        marker = source['monitor_of_sink']
+        if marker is not None and not (type(marker) is int and marker == 4294967295):
+            return False
+    properties = source.get('properties', {})
+    if not isinstance(properties, dict) or properties.get('device.class') == 'monitor':
+        return False
+    return known
+
+
 def configuration(server, playback, microphone, runtime, source=None):
     lines = ['.fail']
     if playback:
@@ -94,9 +122,7 @@ def main():
         sources = json.loads(subprocess.check_output([pactl, '--format=json', 'list', 'sources'],
                                                      env=env, text=True, timeout=5))
         selected = next((s for s in sources if s['name'] == source), None)
-        # Pulse uses UINT32_MAX (or null in some implementations) for non-monitors.
-        # Absent metadata is not the same as an explicit non-monitor marker.
-        if selected is None or 'monitor_of_sink' not in selected or selected['monitor_of_sink'] not in (None, 4294967295):
+        if not is_non_monitor(selected):
             raise ValueError('default source is a monitor or lacks monitor metadata; select a microphone on the host')
     config = runtime / 'default.pa'
     config.write_text(configuration(server, playback == '1', microphone == '1', runtime, source))

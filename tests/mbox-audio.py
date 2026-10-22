@@ -56,10 +56,12 @@ with tempfile.TemporaryDirectory() as directory:
     # before any real process, signal handler, or readiness loop is involved.
     class StartupReached(Exception):
         pass
-    for marker in (None, 4294967295):
+    for metadata in ({'monitor_of_sink': None}, {'monitor_of_sink': 4294967295},
+                     {'monitor_source': ''},
+                     {'monitor_source': '', 'monitor_of_sink': 4294967295}):
         with patch.object(audio.sys, 'argv', argv), \
                 patch.object(audio.subprocess, 'check_output', side_effect=[
-                    'mic\n', json.dumps([{'name': 'mic', 'monitor_of_sink': marker}])]), \
+                    'mic\n', json.dumps([{'name': 'mic', **metadata}])]), \
                 patch.object(audio.subprocess, 'Popen', side_effect=StartupReached) as spawn:
             try:
                 audio.main()
@@ -80,6 +82,15 @@ with tempfile.TemporaryDirectory() as directory:
             else:
                 raise AssertionError('invalid monitor marker accepted')
             spawn.assert_not_called()
+# Real pactl JSON field semantics, malformed and contradictory provider fields.
+for metadata in ({'monitor_source': 'sink'}, {'monitor_source': None},
+                 {'monitor_source': False}, {'monitor_source': 0},
+                 {'monitor_source': '', 'monitor_of_sink': 0},
+                 {'monitor_source': 'sink', 'monitor_of_sink': None},
+                 {'monitor_source': '', 'properties': {'device.class': 'monitor'}},
+                 {'monitor_source': '', 'name': 'sink.monitor'},
+                 {'monitor_of_sink': False}, {}):
+    assert not audio.is_non_monitor({'name': 'source', **metadata}), metadata
 source = (root / 'programs/mbox/mbox.sh.in').read_text()
 assert '--vsock "$pulse_socket:5002"' not in source
 assert '--vsock "$AUDIO_RUNTIME/pulse:5002"' in source
@@ -221,6 +232,19 @@ with tempfile.TemporaryDirectory(prefix='mbox-audio-test-') as temp:
             log.seek(0)
             messages = log.read().decode()
             assert 'already taken' not in messages and 'does not exist' not in messages, messages
+        # Actual pactl JSON must distinguish a null microphone from a monitor,
+        # including an explicitly selected host monitor (no bridge may start).
+        host_sources = json.loads(ctl(server, '--format=json', 'list', 'sources').stdout)
+        assert audio.is_non_monitor(next(s for s in host_sources if s['name'] == 'fixture_mic'))
+        assert not audio.is_non_monitor(next(s for s in host_sources if s['name'] == 'host_output.monitor'))
+        ctl(server, 'set-default-source', 'host_output.monitor')
+        runtime = temp / 'monitor-refused'
+        runtime.mkdir(mode=0o700)
+        bridge, log = start([sys.executable, str(root / 'programs/mbox/audio-host.py'),
+                             pulse, pactl, dbus_run_session, server, '1', '1', str(runtime)], env)
+        assert bridge.wait(timeout=8) != 0
+        assert not (runtime / 'default.pa').exists() and not (runtime / 'ready').exists()
+        ctl(server, 'set-default-source', 'fixture_mic')
         # An unreachable upstream must fail before granting a ready bridge.
         runtime = temp / 'broken-bridge'
         runtime.mkdir(mode=0o700)
