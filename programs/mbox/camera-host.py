@@ -1,4 +1,5 @@
 """Invocation-scoped V4L2 -> fixed BGRA stream. No guest commands are accepted."""
+import ctypes
 import os
 from pathlib import Path
 import selectors
@@ -25,17 +26,40 @@ client = None
 def stop(signum, frame):
     raise SystemExit(128 + signum)
 
-signal.signal(signal.SIGTERM, stop)
-signal.signal(signal.SIGINT, stop)
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+for sig in STOP_SIGNALS:
+    signal.signal(sig, stop)
+
+# Linux-only, single-threaded helper. Arm before exec; SIGKILL is deliberate:
+# FFmpeg may ignore graceful termination after a camera/driver stall. It must not
+# keep the camera when its supervising bridge is gone (including SIGKILL/OOM).
+libc = ctypes.CDLL(None, use_errno=True)
+parent_pid = os.getpid()
+
+def capture_setup(old_mask):
+    if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0:  # PR_SET_PDEATHSIG
+        os._exit(125)
+    # Parent could have died between fork and prctl; don't miss that window.
+    if os.getppid() != parent_pid:
+        os._exit(125)
+    signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
 try:
     client, _ = listener.accept()
     listener.close()
     # Lower-resolution initial implementation: 7.68 MB/s at 25 fps, no compressed
     # guest parser and no dimension/format negotiation from the guest.
-    child = subprocess.Popen([FFMPEG,'-nostdin','-hide_banner','-loglevel','error',
-        '-f','v4l2','-i',f'/proc/self/fd/{fd}', '-an','-vf','scale=320:240,fps=25',
-        '-pix_fmt','bgra','-f','rawvideo','pipe:1'], stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, pass_fds=(fd,))
+    # Don't let a termination handler interrupt Popen before its return value is
+    # assigned: cleanup must always know the child. Restore the mask in the
+    # child before exec as well as in the supervisor after assignment.
+    old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
+    try:
+        child = subprocess.Popen([FFMPEG,'-nostdin','-hide_banner','-loglevel','error',
+            '-f','v4l2','-i',f'/proc/self/fd/{fd}', '-an','-vf','scale=320:240,fps=25',
+            '-pix_fmt','bgra','-f','rawvideo','pipe:1'], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, pass_fds=(fd,),
+            preexec_fn=lambda: capture_setup(old_mask))
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
     os.close(fd); fd = -1
     client.setblocking(False)
     os.set_blocking(child.stdout.fileno(),False)
@@ -67,6 +91,10 @@ try:
             if time.monotonic()-last_progress>5:
                 raise SystemExit('mbox: camera stream stalled')
 finally:
+    # A second TERM/INT/HUP must not raise SystemExit out of the grace-period
+    # wait and skip escalation/reaping. Outer launchers may signal us again.
+    for sig in STOP_SIGNALS:
+        signal.signal(sig, signal.SIG_IGN)
     listener.close()
     if client: client.close()
     if fd >= 0: os.close(fd)

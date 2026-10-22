@@ -42,6 +42,38 @@ Device format negotiation on real webcams, unplug/replug, prolonged load and
 application-specific video calls still need validation. Failure must not be
 worked around by granting the host bus or entire device tree.
 
+## Orphan capture cleanup (post-resume report)
+
+A user reported camera-busy launch failures after suspend/resume. Host diagnosis
+found a ~22.5-hour-old FFmpeg with PPID 1 holding the selected camera; the exact
+capture command/UID/start time were checked. SIGTERM did not stop it; targeted
+SIGKILL released the device and the next Signal launch succeeded. This proves
+the immediate blockage, not the original suspend/driver failure sequence.
+
+Private `tests/mbox-camera-lifecycle.py` reproduced two orphan paths on the old
+helper with a fake capture process that ignores SIGTERM:
+
+- EOF enters cleanup, then another TERM raises SystemExit from inside the
+  grace-period wait, skipping the SIGKILL fallback and child reaping.
+- SIGKILL of the bridge cannot run Python finally; the capture child had no
+  parent-death protection and survived as an orphan.
+
+The helper now ignores TERM/INT/HUP during cleanup, blocks those signals around
+Popen until the child handle is recorded, and arms Linux PR_SET_PDEATHSIG=SIGKILL
+before capture exec with a parent-identity recheck. This preexec hook is confined
+to the single-threaded Linux helper; do not reuse it in a multithreaded process.
+Unexpected bridge death revokes capture even if FFmpeg ignores TERM. A process
+stuck in uninterruptible kernel I/O may still take time to exit after SIGKILL.
+
+Regression tests cover repeated TERM during cleanup, bridge SIGKILL, HUP, stalled
+capture watchdog and normal TERM; synthetic frame/EOF/reverse-data tests remain
+passing. They open no physical camera, inject no desktop input and do not suspend
+the host. Real suspend/resume capture recovery is not proven. The monotonic
+watchdog does not count Linux suspend time itself; a post-resume stall/disconnect
+is a possible trigger, not an observed driver diagnosis. A camera failure still
+terminates this camera-enabled guest path; this patch prevents orphan capture,
+not seamless video-call recovery or automatic capture restart.
+
 ## Backend constraints
 
 The selected microsandbox 0.7.3 CLI has no camera/USB device passthrough API.
