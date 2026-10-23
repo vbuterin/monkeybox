@@ -11,7 +11,7 @@ import time
 import uuid
 
 LIMIT = 1024 * 1024
-TTL = 60
+TTL = 300
 
 
 class ClipboardFailure(RuntimeError):
@@ -269,7 +269,7 @@ def main():
             subprocess.Popen(['@@PYTHON@@', __file__, 'expire', ident],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)
-            print('mbox clipboard: text exported; expires in 60 seconds')
+            print(f'mbox clipboard: text exported; expires in {TTL} seconds')
         elif action in ('import', 'paste'):
             if not buffer.exists():
                 raise ClipboardFailure(EXPIRED)
