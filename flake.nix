@@ -52,6 +52,7 @@
       python3 tests/mbox-network.py --assembly-only
       python3 tests/mbox-camera-host.py
       python3 tests/mbox-options.py
+      python3 tests/mbox-concurrent.py
       python3 tests/mbox-memory.py
       python3 tests/mbox-manage.py
       python3 tests/mbox-swap-package.py

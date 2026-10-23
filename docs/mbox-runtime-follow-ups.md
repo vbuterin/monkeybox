@@ -1,5 +1,26 @@
 # Runtime fixes and open follow-ups
 
+## Concurrent invocations in one project
+
+The launcher formerly derived one sandbox name from the project and passed
+`--replace`. A second launch therefore replaced the first, producing a stale
+lifecycle warning. Names now include a kernel-generated UUID per invocation,
+and normal launches no longer pass `--replace` or remove an earlier sandbox.
+`--fresh` remains accepted for compatibility but is redundant.
+
+The persistent home and project files remain shared between invocations in the
+same project. This is lifecycle independence, not isolation from concurrent file
+edits: application profile locks and concurrent writes still need coordination.
+Each invocation has its own root/owned disks. Stopped instances accumulate until
+explicit `mbox rm NAME`; use `mbox list` to inspect them. No automatic disk GC is
+implemented, and launching again no longer removes earlier swap backing disks.
+
+`tests/mbox-concurrent.py` tests the actual launcher identity fragment and argv
+policy. Its opt-in real-VM mode boots two private VMs sharing one disposable home,
+checks both remain usable, stops the first, then checks the second still executes.
+That test passed against the installed runtime; it is not a rebuilt-wrapper or
+host activation test.
+
 ## Terminated-run PID reuse blocks `--replace`
 
 Observed on the host: Signal's sandbox was `Stopped`, its last run was

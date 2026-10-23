@@ -126,7 +126,7 @@ Options:
                           Setting a size alone does NOT enable swap.
                           Without -s, always use the baseline release firmware.
       --ephemeral          Back the home with tmpfs: everything in it is discarded
-      --fresh              Tear down the existing sandbox and build a new one
+      --fresh              Compatibility flag: every invocation boots a new sandbox
       --dry-run            Print the msb invocation instead of running it
   -h, --help               This text
 
@@ -304,7 +304,11 @@ if [ "$SWAP_ENABLED" = 1 ]; then
     export MSB_LIBKRUNFW_PATH="$SWAP_FIRMWARE"
 fi
 PROJECT="$(realpath -m -- "${PROJECT_DIR:-$PWD}")"
-SANDBOX="mbox-$(printf '%s' "$PROJECT" | sha256sum | cut -c1-12)"
+# Runtime identity is per invocation, not per project. Never replace another
+# live shell in the same directory. Keep the home/persistence paths per project.
+# Kernel-generated UUID avoids PID reuse and collisions across parallel launches.
+read -r INVOCATION_ID < /proc/sys/kernel/random/uuid
+SANDBOX="mbox-$(printf '%s' "$PROJECT" | sha256sum | cut -c1-12)-$INVOCATION_ID"
 PROJECT_STATE="$STATE_ROOT/projects$PROJECT"
 PERSIST_ROOT="$PROJECT_STATE/persist"
 
@@ -856,14 +860,10 @@ fi
 # sandbox has no entrypoint, so its guest init exits immediately and start has nothing
 # to boot (measured: "sandbox process exited (exit status: 0) before agent relay became
 # available"). Booting is therefore part of every command, which costs a few seconds and
-# buys the thing sbox cannot offer — a stopped VM keeps no state to get wrong, and two
-# commands from two projects cannot interfere with each other.
-#
-# The name is still per-project and --replace still clears the old one, so a crash or a
-# killed shell leaves nothing that blocks the next run.
-if [ "$FRESH" = 1 ]; then
-    "$MSB" remove "$SANDBOX" --force >/dev/null 2>&1 || true
-fi
+# gives each invocation its own VM. Commands in the same project deliberately
+# share its persistent home and files, but not runtime lifecycle or owned disks.
+# --fresh is now redundant; do not remove any previous or concurrent instance.
+# Stopped instances remain available for inspect/logs/rm; no implicit disk GC.
 
 if [ "$DRY_RUN" != 1 ]; then
     # Best-effort desktop registration; headless hosts may have no user runtime.
@@ -872,4 +872,4 @@ if [ "$DRY_RUN" != 1 ]; then
         echo 'mbox: instance management registration unavailable' >&2
     }
 fi
-run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} --replace "$IMAGE" -- "${INNER[@]}"
+run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} "$IMAGE" -- "${INNER[@]}"
