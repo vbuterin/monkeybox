@@ -52,7 +52,9 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         assert (d/'buffer.json').stat().st_mode & 0o077 == 0
         main('import')
         assert calls[-1][2] == b'fixture text'
-        category(23, lambda: main('import'))
+        # Persistence: a second guest imports the same buffer without a new Copy.
+        main('import')
+        assert calls[-1][2] == b'fixture text'
         main('export')
         record = json.loads((d/'buffer.json').read_text())
         record['expires'] = time.monotonic()-1
@@ -91,7 +93,12 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         main('paste')
         assert calls[-1][1:] == ('import', b'fixture text')
         assert key.call_args.args == (host, 'v')
-        assert not (d/'buffer.json').exists()
+        # Paste never consumes the transfer buffer: one Copy can feed several
+        # guests until it expires or an explicit clear removes it.
+        assert (d/'buffer.json').exists()
+        main('paste')
+        assert calls[-1][1:] == ('import', b'fixture text')
+        assert (d/'buffer.json').exists()
     # A failed Copy cannot export the old buffer.
     with patch.object(b, 'focused', return_value=host), patch.object(b, 'endpoint', side_effect=endpoint), \
             patch.object(b, 'application_key', side_effect=RuntimeError('focus changed')):
@@ -113,4 +120,4 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         b.application_key(guest_target, 'v')
         assert guest_endpoint.call_args.args == (guest_target, 'key-paste')
         send.assert_not_called()  # Never inject guest editing keys on the host.
-print('CLIPBOARD_POLICY_OK: host Foot semantic keys,  copy/paste sequencing, stale-copy invalidation,  bounds, encoding, expiry, consumption, focus change, stale PID, disabled/unregistered proxy')
+print('CLIPBOARD_POLICY_OK: host Foot semantic keys,  copy/paste sequencing, stale-copy invalidation,  bounds, encoding, expiry, paste persistence, focus change, stale PID, disabled/unregistered proxy')

@@ -216,7 +216,7 @@ def main():
         # Read the host clipboard and transfer buffer separately: bar focus is
         # not authority to introspect an arbitrary guest's local clipboard.
         result = dict(host='', transfer='', hostStatus='No supported host text',
-                      transferStatus='Empty, expired or consumed')
+                      transferStatus='Empty or expired')
         try:
             result['host'] = text(bounded(['@@WL_PASTE@@', '--no-newline', '--type', 'text/plain;charset=utf-8'])).decode('utf-8')
             result['hostStatus'] = 'Host clipboard (snapshot)'
@@ -274,9 +274,13 @@ def main():
             if not buffer.exists():
                 raise ClipboardFailure(EXPIRED)
             record = json.loads(buffer.read_text())
-            buffer.unlink()  # Consume even on failure; no accidental later delivery.
             if time.monotonic() >= record['expires']:
+                # A stale buffer cannot be delivered later; remove it now.
+                buffer.unlink()
                 raise ClipboardFailure(EXPIRED)
+            # The buffer survives Paste: one Copy can feed several guests until
+            # it expires or an explicit clear removes it. Failed deliveries also
+            # keep it, so the Paste can simply be retried on the right window.
             data = text(record['text'].encode('utf-8'))
             if focused() != target:
                 raise ClipboardFailure(FOCUS)
