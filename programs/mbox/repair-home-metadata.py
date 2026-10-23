@@ -1,4 +1,5 @@
-"""Repair legacy guest-root directory overrides, never host ownership or contents.
+"""Prepare private Pi state and repair legacy guest-root directory overrides.
+Never change host ownership or application contents.
 Only fixed application-state directories in the caller-owned private home.
 Open every component with O_NOFOLLOW; do not traverse arbitrary guest symlinks.
 """
@@ -45,6 +46,14 @@ def main(home):
             fd = os.dup(root)
             try:
                 for component in path.split("/"):
+                    # Read-only Pi resource mounts otherwise create .pi/agent
+                    # as guest root on first boot, before Pi can write sessions.
+                    # Create only these fixed private parents as the host caller.
+                    if path in (".pi", ".pi/agent"):
+                        try:
+                            os.mkdir(component, mode=0o700, dir_fd=fd)
+                        except FileExistsError:
+                            pass
                     child = os.open(component, FLAGS, dir_fd=fd)
                     os.close(fd)
                     fd = child

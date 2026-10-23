@@ -16,6 +16,11 @@ root_override = struct.pack('=B3xIIII', 1, 0, 0, 0o40755, 0)
 with tempfile.TemporaryDirectory() as tmp:
     home = Path(tmp)/'home'
     home.mkdir()
+    # First launch: create Pi's writable parent before guest-root mount setup.
+    m.main(home)
+    assert (home/'.pi/agent').stat().st_uid == os.getuid()
+    assert (home/'.pi/agent').stat().st_mode & 0o777 == 0o700
+    assert list((home/'.pi/agent').iterdir()) == []
     for name in ['', '.npm-global', '.npm-global/bin', '.pi', '.pi/agent']:
         p = home/name
         p.mkdir(exist_ok=True)
@@ -64,4 +69,10 @@ with tempfile.TemporaryDirectory() as tmp:
             else:
                 raise AssertionError('unexpected removal failure was swallowed')
         assert os.getxattr(target, m.KEY) == root_override
-print('PASS: narrow metadata repair, concurrent removal tolerated, other errors preserved')
+    # Never follow a guest-controlled parent symlink to create host directories.
+    fresh = Path(tmp)/'fresh'
+    fresh.mkdir()
+    (fresh/'.pi').symlink_to(outside)
+    m.main(fresh)
+    assert not (outside/'agent').exists()
+print('PASS: first-launch private Pi parents, no symlink traversal, narrow metadata repair and concurrency')
