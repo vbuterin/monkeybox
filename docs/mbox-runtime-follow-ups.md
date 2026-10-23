@@ -21,6 +21,25 @@ checks both remain usable, stops the first, then checks the second still execute
 That test passed against the installed runtime; it is not a rebuilt-wrapper or
 host activation test.
 
+## Launching inside a granted directory
+
+Launching in a directory that is also a resource grant — `~/world_knowledge` is
+granted read-only to every sandbox by host policy, to be read from other
+projects — assembled the same guest path twice: the launcher's read-write
+project mount and the inherited read-only grant. msb rejects that before boot
+("multiple volumes cannot mount the same guest path"). The launcher now enforces
+one volume per guest path at the end of mount assembly, keeping the earlier
+mount and noting the skipped duplicate on stderr. The read-write project mount
+is assembled first, so working in a granted directory keeps project semantics
+and only the redundant grant is skipped. Explicit `--file` grants of an already
+mounted destination still fail loudly; that is a deliberate per-invocation act,
+not inherited policy.
+
+`tests/mbox-mount-dedupe.py` exercises the real mount-assembly fragment: the
+project-grant collision (read-only and read-write variants), file grants inside
+the project surviving, the no-collision case skipping nothing, and no duplicate
+guest paths in any assembled set.
+
 ## Terminated-run PID reuse blocks `--replace`
 
 Observed on the host: Signal's sandbox was `Stopped`, its last run was

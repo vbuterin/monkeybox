@@ -578,6 +578,48 @@ if [ "$SHARE_PROFILE" = 1 ]; then
     fi
 fi
 
+# One volume per guest path. Project, home, persistence, resource grants and
+# shell plumbing are assembled independently, so launching *inside* a granted
+# directory — the workspace also listed in bindReadOnly for reading it from
+# other projects — used to present the same guest path twice and die in msb's
+# config validation ("multiple volumes cannot mount the same guest path").
+# The earlier mount wins: the read-write project mount is assembled before the
+# read-only resource grants, so working in a granted directory keeps project
+# semantics and only the redundant grant is skipped, with a note. Everything
+# added after this point (the swap disk's fixed /run/mbox-swap path) is unique
+# by construction.
+MOUNT_DESTS_count=${#MOUNTS[@]}
+declare -a UNIQUE_MOUNTS=()
+declare -A MOUNT_DESTS=()
+mi=0
+while [ "$mi" -lt "$MOUNT_DESTS_count" ]; do
+    mflag="${MOUNTS[$mi]}"
+    marg="${MOUNTS[$((mi + 1))]}"
+    case "$mflag" in
+        --mount-dir | --mount-file)
+            mdest="${marg#*:}"
+            mdest="${mdest%%:*}"
+            ;;
+        --tmpfs | --mount-owned)
+            mdest="${marg%%:*}"
+            ;;
+        *)
+            mdest=""
+            ;;
+    esac
+    if [ -n "$mdest" ] && [ -n "${MOUNT_DESTS[$mdest]:-}" ]; then
+        echo "mbox: duplicate guest mount for $mdest; keeping the earlier mount" >&2
+    else
+        if [ -n "$mdest" ]; then
+            MOUNT_DESTS[$mdest]=1
+        fi
+        UNIQUE_MOUNTS+=("$mflag" "$marg")
+    fi
+    mi=$((mi + 2))
+done
+MOUNTS=("${UNIQUE_MOUNTS[@]}")
+unset UNIQUE_MOUNTS MOUNT_DESTS mi mflag marg mdest MOUNT_DESTS_count
+
 
 # ---- network --------------------------------------------------------------
 # Explicit profiles avoid depending on the backend's implicit defaults.
