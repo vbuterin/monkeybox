@@ -5,7 +5,7 @@ import subprocess
 
 source = (Path(__file__).resolve().parents[1]/'programs/mbox/mbox.sh.in').read_text()
 parser = source.split('DRY_RUN=0\n', 1)[1].split('# Refuse to nest.', 1)[0]
-parser = 'CPUS=2\nDRY_RUN=0\n' + parser.replace('@@EXPOSE_TCP@@', '')
+parser = 'CPUS=2\nDRY_RUN=0\n' + parser.replace('@@ALLOW_TCP@@', '').replace('@@PUBLISH_TCP@@', '')
 parser += '\nprintf "%s\\0" "$CLIPBOARD" "$WAYLAND" "$CPUS" "${CMD[@]}"'
 for option in ('-c', '--clipboard'):
     for args in ([ '-v', option, 'firefox'], [option, '-v', '--', 'firefox'],
@@ -77,7 +77,7 @@ for args, expected in [(['-avicl'], b'CAMERA=1:/dev/video0'),
                        (['-l', '--no-camera'], b'CAMERA=0:/dev/video0')]:
     assert subprocess.check_output(['bash','-eu','-c',camera_parser,'test',*args]).endswith(expected)
 # All value-taking short options may END a cluster, never occur inside one.
-variables = {'p': 'EXPOSE[@]', 'n': 'NET_MODE', 'P': 'EXTRA_PERSIST[@]',
+variables = {'p': 'ALLOW[@]', 'n': 'NET_MODE', 'P': 'EXTRA_PERSIST[@]',
              'f': 'EXTRA_MOUNTS[@]', 'e': 'EXTRA_ENV[@]', 'C': 'NIX_CACHE_PATHS[@]', 'm': 'MEMORY'}
 for letter, variable in variables.items():
     probe = parser + '\nprintf "VALUE=%s" "${' + variable + '}"'

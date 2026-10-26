@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-files-') as temp:
     assert run(directory, prefix=f'HOME_MOUNT=(--mount-dir "{directory}:{directory}:rw");\n').returncode == 2
     # Real parser -> real mount assembly: variadic grants are not just parsed
     # but become individual same-path file/directory mounts.
-    parser = 'DRY_RUN=0\n' + source.split('DRY_RUN=0\n',1)[1].split('# Refuse to nest.',1)[0].replace('@@EXPOSE_TCP@@','')
+    parser = 'DRY_RUN=0\n' + source.split('DRY_RUN=0\n',1)[1].split('# Refuse to nest.',1)[0].replace('@@ALLOW_TCP@@','').replace('@@PUBLISH_TCP@@','')
     combined = parser + '\nMOUNTS=(); HOME_MOUNT=(); MBOX_UID=1000; MBOX_GID=100;\n' + fragment
     combined += '\nprintf "%s\\n" "${MOUNTS[@]}" "COMMAND=${CMD[*]}" "MEMORY=$MEMORY" "NETWORK=$NET_MODE"'
     result = subprocess.run(['bash','-eu','-c',combined,'test','-af',str(file),str(directory),'-im','15000','--','mplayer','-shuffle',str(file)],capture_output=True,text=True)

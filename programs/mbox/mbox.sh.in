@@ -90,7 +90,8 @@ Usage:
   mbox list | ps | stop NAME | rm NAME | logs NAME | inspect NAME | doctor
 
 Options:
-  -p, --expose-port PORT   Let the guest reach this port on the host (repeatable)
+  -p, --allow-port PORT    Let the guest reach this TCP port on the host (repeatable)
+      --expose-port PORT   Publish this guest TCP port on host 127.0.0.1 (repeatable)
   -i, --internet           Enable internet access (blocked by default)
   -l, --camera             Opt in to camera /dev/video0 (experimental Firefox portal)
       --camera-device PATH Select another V4L2 device; requires --camera
@@ -98,8 +99,10 @@ Options:
   -n, --network MODE       open (internet), blocked (no internet), host (alias of open)
                            Explicit -p grants apply in every mode. In the guest,
                            connect to its default gateway, not 127.0.0.1.
-                           --expose-port is a legacy name for host access, NOT
-                           sbox's guest-to-host port publishing option.
+                           --expose-port runs the other way: the host reaches a
+                           guest listener, as the same-numbered loopback port.
+                           As in sbox, -p is host access and --expose-port is
+                           publishing; blocked mode still blocks egress.
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
   -v, --visual             Software Wayland + guest-local Xwayland (filtered compositor access)
   -c, --clipboard          Opt-in nested desktop with explicit host text transfers (requires -v)
@@ -173,7 +176,8 @@ AUDIO=0
 MICROPHONE=0
 HOST_LOOPBACK=0
 PROJECT_DIR=""
-declare -a EXPOSE=(@@EXPOSE_TCP@@) EXTRA_PERSIST=() EXTRA_MOUNTS=() EXTRA_ENV=()
+declare -a ALLOW=(@@ALLOW_TCP@@) PUBLISH=(@@PUBLISH_TCP@@)
+declare -a EXTRA_PERSIST=() EXTRA_MOUNTS=() EXTRA_ENV=()
 declare -a NIX_CACHE_PATHS=()
 declare -a CMD=()
 CMD_TAKEN=0
@@ -202,7 +206,7 @@ while [ $# -gt 0 ]; do
         set -- "${cluster_args[@]}" "$@"
     fi
     case "$1" in
-        -p|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache)
+        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache)
             if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = -* ]]; then
                 echo "mbox: $1 requires a value (see mbox --help)" >&2
                 exit 2
@@ -212,7 +216,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --) shift; CMD=("$@"); CMD_TAKEN=1; break ;;
         -h | --help) usage; exit 0 ;;
-        -p | --expose-port) EXPOSE+=("$2"); shift 2 ;;
+        -p | --allow-port) ALLOW+=("$2"); shift 2 ;;
+        --expose-port) PUBLISH+=("$2"); shift 2 ;;
         -n | --network) NET_MODE="$2"; shift 2 ;;
         -P | --persist) EXTRA_PERSIST+=("$2"); shift 2 ;;
         -f | --file)
@@ -625,10 +630,21 @@ unset UNIQUE_MOUNTS MOUNT_DESTS mi mflag marg mdest MOUNT_DESTS_count
 # Explicit profiles avoid depending on the backend's implicit defaults.
 # Never add the broad `host` profile for a single-port grant: host access is
 # guest EGRESS, not published-port ingress. Grants also work with blocked mode.
+#
+# The two directions are separate options, as they are in sbox: -p/--allow-port
+# is a host port the guest may reach (egress), --expose-port is a guest port the
+# host may reach (ingress). Blocked mode denies egress with --no-net, and --no-net
+# denies the ingress direction too, which would silently disable every published
+# port. So a blocked sandbox that publishes expresses the same egress-only denial
+# as the two explicit defaults instead, leaving ingress open for the relay.
 declare -a NET=()
 case "$NET_MODE" in
     blocked)
-        NET+=(--no-net)
+        if [ ${#PUBLISH[@]} -gt 0 ]; then
+            NET+=(--net-default-egress deny --net-default-ingress allow)
+        else
+            NET+=(--no-net)
+        fi
         ;;
     open | host)
         NET+=(--net public)
@@ -639,7 +655,7 @@ case "$NET_MODE" in
         ;;
 esac
 LOOPBACK_PORTS=""
-for p in "${EXPOSE[@]}"; do
+for p in "${ALLOW[@]}"; do
     if [[ ! "$p" =~ ^[0-9]{1,5}$ ]] || (( 10#$p < 1 || 10#$p > 65535 )); then
         echo "mbox: invalid TCP port '$p' (expected 1..65535)" >&2
         exit 2
@@ -649,6 +665,21 @@ for p in "${EXPOSE[@]}"; do
         *" $((10#$p)) "*) ;;
         *) LOOPBACK_PORTS+=" $((10#$p))" ;;
     esac
+done
+# The same number on both sides, so there is one port to remember. The relay is a
+# host listener, which is why none of these touch LOOPBACK_PORTS (that is the
+# opposite direction) and why they need ingress open in every mode.
+PUBLISHED=""
+for p in "${PUBLISH[@]}"; do
+    if [[ ! "$p" =~ ^[0-9]{1,5}$ ]] || (( 10#$p < 1 || 10#$p > 65535 )); then
+        echo "mbox: invalid TCP port '$p' (expected 1..65535)" >&2
+        exit 2
+    fi
+    case " $PUBLISHED " in
+        *" $((10#$p)) "*) continue ;;
+    esac
+    PUBLISHED+=" $((10#$p))"
+    NET+=(--port "127.0.0.1:$((10#$p)):$((10#$p))")
 done
 
 # ---- environment ----------------------------------------------------------

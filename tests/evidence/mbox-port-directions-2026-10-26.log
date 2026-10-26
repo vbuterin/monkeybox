@@ -1,0 +1,61 @@
+Port directions after the sbox-compatible split (2026-10-26)
+===========================================================
+
+Before: -p and --expose-port were synonyms, both meaning "the guest may reach this
+host port". sbox has always meant two opposite things:
+  --allow-port, -p PORT   forward a host port INTO the sandbox   (guest -> host)
+  --expose-port PORT      expose a sandbox port to the host       (host -> guest)
+mbox now matches sbox. --expose-port publishes the guest port on host loopback at
+the same number.
+
+Host-side assembly (wrapper --dry-run, no VM):
+
+  $ mbox --dry-run /tmp --expose-port 8080 -p 8012 | grep -o -- '--net-default.*--port [^ ]*'
+  --net-default-egress deny --net-default-ingress allow --net-rule allow:egress@host:tcp:8012 --port 127.0.0.1:8080:8080
+
+Why blocked mode changes shape when something is published: --no-net is sugar for
+--net-default deny in BOTH directions, so it would close the ingress side and
+silently disable every published port. The two explicit defaults keep egress denied
+while leaving ingress open for the relay.
+
+  $ mbox --dry-run /tmp -p 8012 | grep -c -- --no-net
+  1
+  $ mbox --dry-run /tmp --expose-port 8080 | grep -c -- --no-net
+  0
+
+Rejection of ports outside 1..65535 (both directions), and of a missing value:
+
+  mbox: invalid TCP port '0' (expected 1..65535)
+  mbox: invalid TCP port '70000' (expected 1..65535)
+  mbox: --expose-port requires a value (see mbox --help)
+
+Real VM, both directions at once, blocked egress. Host 18011 is a python http.server
+(0.0.0.0:18011); the guest listens on 18099 with busybox httpd:
+
+  $ mbox /tmp -p 18011 -- bash -lc 'GW=$(ip route | awk "/default/{print \$3; exit}");
+      echo "GW=$GW";
+      busybox wget -T 8 -q -O - "http://$GW:18011/" && echo HOST-REACHABLE || echo HOST-BLOCKED;
+      busybox wget -T 5 -q -O /dev/null http://93.184.216.34/ && echo EGRESS-OPEN || echo EGRESS-BLOCKED'
+  GW=172.16.0.5
+  host-service-page
+  HOST-REACHABLE
+  EGRESS-BLOCKED
+
+  host listener log: 127.0.0.1 - - "GET / HTTP/1.1" 200 -      # the guest's request
+
+  $ mbox /tmp --expose-port 18099 -- bash -lc 'mkdir -p /tmp/www;
+      echo guest-service-page > /tmp/www/index.html; exec busybox httpd -f -p 18099 -h /tmp/www' &
+  $ curl -fsS http://127.0.0.1:18099/
+  guest-service-page
+
+Policy tier (no VM) with the new assembly, including the Nix evaluation of both new
+options and of the renamed one:
+
+  $ nix build .#checks.x86_64-linux.policy      # all 18 scripts pass
+  $ python3 tests/mbox-network.py
+  PASS: actual mbox port assembly in both directions, blocked-mode grants, invalid
+  port rejection, evaluated default ports, renamed option alias
+
+The NixOS module option that used to be exposedTCPPorts is now allowedTCPPorts
+(sbox's name for the same direction) and there is a publishedTCPPorts for the new
+one. exposedTCPPorts still evaluates through mkRenamedOptionModule.

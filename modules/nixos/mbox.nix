@@ -528,7 +528,8 @@ let
       "@@CACERT@@"
       "@@HOOK_FILE@@"
       "@@NET_MODE@@"
-      "@@EXPOSE_TCP@@"
+      "@@ALLOW_TCP@@"
+      "@@PUBLISH_TCP@@"
       "@@SHARE_STORE@@"
       "@@AGENT_WAIT@@"
       "@@PERSIST@@"
@@ -575,7 +576,8 @@ let
       "${pkgs.cacert}"
       "${hookFile}"
       cfg.networkMode
-      (lib.concatMapStringsSep " " toString cfg.exposedTCPPorts)
+      (lib.concatMapStringsSep " " toString cfg.allowedTCPPorts)
+      (lib.concatMapStringsSep " " toString cfg.publishedTCPPorts)
       (if cfg.shareNixStore then "1" else "0")
       (toString cfg.agentWaitTicks)
       quotedList
@@ -596,6 +598,15 @@ let
     (builtins.readFile ../../programs/mbox/mbox.sh.in));
 in
 {
+  imports = [
+    # This option has always meant host access (-p), but carried the name sbox gives
+    # the opposite direction. Accept the old name for one release so a host config
+    # that has not caught up still evaluates.
+    (lib.mkRenamedOptionModule
+      [ "programs" "mbox" "exposedTCPPorts" ]
+      [ "programs" "mbox" "allowedTCPPorts" ])
+  ];
+
   options.programs.mbox = {
     managementPackage = lib.mkOption { type = lib.types.package; readOnly = true; description = "Host-only instance management and diagnostics CLI."; };
     swapFirmwarePath = lib.mkOption {
@@ -753,21 +764,31 @@ in
       description = ''
         Default egress policy. CLI -i/--internet enables open egress. `open` gives the guest public internet access;
         `host` is a compatibility alias for `open`, not unrestricted host access.
-        `blocked` denies internet access. Explicit exposedTCPPorts and CLI -p
+        `blocked` denies internet access. Explicit allowedTCPPorts and CLI -p
         grants apply in every mode, including blocked. Host services are reached
         through the guest's default gateway, not its own loopback address.
         Other host ports and private networks are not granted by these profiles.
       '';
     };
 
-    exposedTCPPorts = lib.mkOption {
+    allowedTCPPorts = lib.mkOption {
       type = lib.types.listOf lib.types.port;
       default = [ ];
       description = ''
         Ports of services listening on the host that the guest may reach. Each becomes
         one guest-egress TCP allow rule; it does not enable the broad host profile.
-        This is like sbox's -p, NOT sbox's --expose-port (guest port publishing).
-        The mbox CLI retains --expose-port as a legacy synonym for -p.
+        This is sbox's allowedTCPPorts, the -p/--allow-port direction.
+      '';
+    };
+
+    publishedTCPPorts = lib.mkOption {
+      type = lib.types.listOf lib.types.port;
+      default = [ ];
+      description = ''
+        Ports of guest listeners that the host may reach, published on 127.0.0.1 at
+        the same number. This is sbox's --expose-port direction: a host-side relay
+        into the sandbox, the opposite of allowedTCPPorts. Publishing reopens the
+        ingress direction, but a blocked default still denies guest egress.
       '';
     };
 

@@ -57,7 +57,8 @@ Choose a small project directory rather than a directory full of sensitive files
 |---|---|
 | `-f PATH...` | Selected existing files/directories, same-path read-write |
 | `-i` | Public internet egress |
-| `-p PORT` | Guest access to one host TCP service; not guest port publication |
+| `-p PORT` | Guest access to one host TCP service (sbox's `--allow-port`) |
+| `--expose-port PORT` | Host access to one guest TCP service, on the same loopback port |
 | `-v` | Software Wayland window/input bridge |
 | `-a` | Audio output only (guest may monitor its own playback) |
 | `-r` | Microphone input, independent of `-a` |
@@ -70,6 +71,13 @@ separate arguments. `-af ~/Music -im 15000` is valid; `-afm` is not. Memory numb
 without suffixes are MiB. `-f` consumes non-option arguments until the next option
 or `--`; put `--` before the application. Shells expand globs, not Monkeybox.
 Missing values error. Application arguments after `--` are never reparsed.
+
+The two port options point opposite ways, as in sbox. `-p 8012` lets the guest reach
+the host's 8012 (egress). `--expose-port 8080` opens host `127.0.0.1:8080` and forwards
+it to the guest's 8080 (ingress). Publishing reopens only the ingress direction, so
+a blocked sandbox stays offline in the outbound direction. A published port lives
+exactly as long as the invocation that opened it, because each invocation boots its
+own VM.
 
 ## Configure without NixOS
 
@@ -88,7 +96,8 @@ Create your own flake using our builder:
         memory = "4096M";
         cpus = 2;
         # Optional additional explicitly shared/persistent resources:
-        # exposedTCPPorts = [ 8012 ];
+        # allowedTCPPorts = [ 8012 ];      # guest may reach host:8012
+        # publishedTCPPorts = [ 8080 ];    # host may reach guest:8080
         # bindReadOnly."/path/to/reference-data" = {};
         # shellHook = "export MY_VARIABLE=value";
       };
