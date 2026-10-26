@@ -79,12 +79,17 @@ a blocked sandbox stays offline in the outbound direction. A published port live
 exactly as long as the invocation that opened it, because each invocation boots its
 own VM.
 
-A published port reaches the guest's *network* address, not the guest's loopback.
-The service inside has to listen on `0.0.0.0` (or the guest's own address); a dev
-server started on `localhost`/`127.0.0.1` is reachable from inside the guest and
-invisible from the host, which shows up as a reset connection (`Empty reply from
-server`, `ERR_EMPTY_RESPONSE`) rather than a timeout. Check it in the guest with
-`ss -tln | grep PORT`: `0.0.0.0:PORT` or `*:PORT` works, `127.0.0.1:PORT` does not.
+A published port arrives at the guest's *network* address, and Monkeybox forwards it
+into the guest's loopback, so a service that listens on `localhost`/`127.0.0.1` is
+reachable from the host exactly like one that listens on `0.0.0.0`. Nothing has to
+change in the service and no extra step is needed per run: inside the guest, the
+published ports are watched, and one whose only listener is on the guest's loopback
+gets the guest's own address bound and forwarded into the loop. A port a service
+already serves on the network address is left untouched, so that case keeps the port
+for itself, and the forward is withdrawn when the loopback listener stops, so a
+restart that binds the network address still gets the port. Both directions of a
+single port are independent: `-p 8080 --expose-port 8080` publishes a guest service
+and still lets the guest reach a host one.
 
 ## Configure without NixOS
 

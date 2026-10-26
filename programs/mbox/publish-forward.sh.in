@@ -1,0 +1,16 @@
+# Guest side of a published port.
+#
+# The microsandbox network stack delivers a host connection to the guest's own
+# network address, which a service bound to the guest's loopback never accepts.
+# This forwards those ports into the loop so that a plain "listen on localhost"
+# server is reachable from the host without being reconfigured. Ports a service
+# already serves on the network address are not touched at all.
+set -euo pipefail
+ports=$1
+shift
+if [ -n "${ports// /}" ]; then
+    # Backgrounded like the loopback relays above it: the user's command replaces
+    # this process, and the supervisor goes away with the VM.
+    @@PYTHON@@ @@PUBLISH_FORWARD@@ $ports &
+fi
+exec "$@"

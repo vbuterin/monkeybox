@@ -101,9 +101,11 @@ Options:
                            connect to its default gateway, not 127.0.0.1.
                            --expose-port runs the other way: the host reaches a
                            guest listener, as the same-numbered loopback port.
-                           The guest listener must bind 0.0.0.0 (or the guest's
-                           own address); a guest 127.0.0.1 listener is not
-                           reachable through it.
+                           A guest listener on any address works: the guest's
+                           own address and 0.0.0.0 are reached directly, and a
+                           127.0.0.1 or ::1 listener through a forward opened
+                           for it, so a dev server on localhost needs no
+                           changes.
                            As in sbox, -p is host access and --expose-port is
                            publishing; blocked mode still blocks egress.
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
@@ -912,6 +914,14 @@ fi
 
 if [ "$HOST_LOOPBACK" = 1 ]; then
     INNER=("@@LOOPBACK_GUEST@@" "$LOOPBACK_PORTS" "${INNER[@]}")
+fi
+
+# The host's connection arrives at the guest's network address, so a service that
+# listens on the guest's own loopback needs forwarding into the loop. The helper
+# binds nothing until such a listener shows up, and never takes a port a service
+# is already serving on the network address.
+if [ -n "$PUBLISHED" ]; then
+    INNER=("@@PUBLISH_GUEST@@" "$PUBLISHED" "${INNER[@]}")
 fi
 
 if [ ${#NIX_CACHE_PATHS[@]} -gt 0 ]; then

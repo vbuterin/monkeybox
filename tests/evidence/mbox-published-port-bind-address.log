@@ -1,5 +1,5 @@
-Published ports reach the guest's network address, not its loopback (2026-10-26)
-===============================================================================
+Published ports now reach a guest loopback service (2026-10-26, 2026-10-27)
+============================================================================
 
 Found from the first real use of the new flag: `mbox-online --expose-port 4321`
 followed by an `npm run dev` that printed `http://localhost:4321/en/` and was not
@@ -17,7 +17,7 @@ exactly that shape:
 The guest relay is handed only the `-p` ports, so publishing does not interact with
 --host-loopback at all.
 
-Real VM, same invocation, only the guest bind address differs:
+Diagnosis, real VM, same invocation, only the guest bind address differs:
 
   A) guest: busybox httpd -f -p 14321 -h /tmp/www          # binds 0.0.0.0
      $ curl -fsS http://127.0.0.1:14321/
@@ -37,15 +37,63 @@ msb's port publisher dials the guest's IPv4 address, not the guest's loopback
 (crates/network/lib/engine/ports/publisher.rs, the `guest_ip` field: "the common case
 -- most services bind 0.0.0.0 or dual-stack ::, both of which accept v4"). A
 loopback-only listener is therefore refused by the guest's own stack, and the host
-sees a reset instead of a timeout.
+sees a reset instead of a timeout. The forwarding on the host side is correct; the
+missing hop is inside the guest.
 
-That difference is the diagnostic worth remembering:
+That difference is still the diagnostic worth remembering:
 
   connection refused / timeout on the host   -> no host-side listener at all
                                                 (flag missing, or VM gone)
   empty reply / ERR_EMPTY_RESPONSE           -> listener exists, guest bound 127.0.0.1
 
-Fixes are on the guest side, since the forwarding itself is correct: bind the dev
-server to 0.0.0.0 (or the guest's address), and confirm with
-`ss -tln | grep PORT` showing `0.0.0.0:PORT`/`*:PORT` rather than `127.0.0.1:PORT`.
-Documented in README.md and in `mbox --help` next to the option.
+Fix: nothing asked of the caller and nothing asked of the service. The wrapper
+starts programs/mbox/publish-forward.sh.in before the user's command whenever a
+port is published. It reads the guest's own `/proc/net/tcp{,6}` every 0.2 s and,
+for a published port whose *only* listener is on the guest's loopback, binds the
+guest's own address on that port and forwards into the loop; when the loopback
+listener goes away it closes that socket again. A port a service already serves on
+the guest's address, on 0.0.0.0 or on a dual-stack :: is left completely alone, so
+the common case never has a stranger on its port. No nftables/iptables and no
+kernel feature is assumed; the addresses are the guest's, so the host's published
+loopback port is unchanged.
+
+The decision is made from listening sockets, not from configuration, so it holds for
+any port, any service, and any start order, including a service that restarts with a
+different bind address.
+
+Two bugs were found and fixed while verifying:
+
+  1. The relay counted its *own* listener on the guest address as proof that the
+     service was reachable, so it withdrew and rebuilt the relay on every poll
+     (0.2 s) and host requests failed most of the time. Excluding the relay's own
+     address once it is bound removed the oscillation.
+  2. That flap was invisible in the first VM run because the guest was still running
+     an older realised copy of the script: the wrapper embeds a store path, so a
+     stale `/tmp` wrapper keeps testing the previous version. Re-evaluating the
+     wrapper and realising the new derivation is part of the check.
+
+Verified in a real VM, the user's own alias shape
+(`--host-loopback -p 8000 --network open --expose-port PORT`), server bound to the
+guest's 127.0.0.1, guest listeners unchanged:
+
+  $ curl -fsS http://127.0.0.1:14334/      # 8 rounds, 1 s apart
+  ALIAS-PAGE  ALIAS-PAGE  ALIAS-PAGE  ALIAS-PAGE
+  ALIAS-PAGE  ALIAS-PAGE  ALIAS-PAGE  ALIAS-PAGE
+  successful rounds: 8/8
+  guest listeners:
+    tcp  0  0 127.0.0.1:14334  0.0.0.0:*  LISTEN
+
+and, with `--network blocked` (no internet at all):
+
+  guest `python3 -m http.server 14331 --bind 127.0.0.1`   host -> LOOPBACK-PAGE
+  guest `python3 -m http.server 14332 --bind 0.0.0.0`     host -> NET-PAGE
+        (started 3 s after the forwarder was already watching: the service got the
+        port, nothing had taken it, and its access log shows the host connection
+        arriving directly)
+  guest `python3 -m http.server 14333 --bind ::1`         host -> V6-PAGE
+
+tests/mbox-publish-forward.py covers the same state machine without a VM: forward a
+loopback-only listener, one announcement only under repeated polls, leave a
+wildcard listener alone even when it appears after the first poll, forward ::1,
+withdraw when the listener stops, and let the freed port accept a listener on the
+guest's address.

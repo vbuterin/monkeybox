@@ -181,3 +181,20 @@ Non-NixOS runtime deployment, physical cameras, sustained audio/video,
 Chromium/Electron and broad lifecycle coverage remain unverified in this
 extraction. Historical evidence is documented in ../PROVENANCE.md, not treated
 as a rerun of every test after packaging changes.
+
+## Published ports and a guest loopback service
+
+`tests/mbox-publish-forward.py` runs `programs/mbox/publish-forward.py` directly, so it
+needs a real socket table and a real non-loopback address to bind, but no VM. It
+checks that a listener on the guest's loopback (127.0.0.1 and ::1) is forwarded
+through the guest's own address on a published port, that a listener on 0.0.0.0 is
+left alone even when it starts after the forwarder has already polled, and that
+stopping the loopback listener releases the port again. Run it on a host:
+
+```sh
+python3 tests/mbox-publish-forward.py
+```
+
+The Nix build sandbox has no non-loopback address, so this test is not part of the
+`policy` check. The end-to-end path, a real VM with a server bound to the guest's
+127.0.0.1, is recorded in `evidence/mbox-published-port-bind-address.log`.

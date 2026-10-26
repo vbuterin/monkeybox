@@ -108,6 +108,15 @@ assert "ALLOW=(8012)" in path, path[path.index("declare -a ALLOW"):][:200]
 assert "PUBLISH=(8080)" in path, path[path.index("declare -a ALLOW"):][:200]
 assert "@@ALLOW_TCP@@" not in path
 assert "@@PUBLISH_TCP@@" not in path
+# A published port has to reach a guest service that only listens on the guest's own
+# loopback, so the wrapper starts the guest-side forward before the user's command --
+# and only when something is published, since the forward binds nothing by itself.
+assert "@@PUBLISH_GUEST@@" not in path
+forward = [line for line in path.splitlines() if "-mbox-publish-forward\"" in line]
+assert len(forward) == 1, forward
+line = forward[0].strip()
+assert line.startswith('INNER=("/nix/store/') and '"$PUBLISHED"' in line, line
+assert 'if [ -n "$PUBLISHED" ]; then' in path
 # The old name still evaluates: a host config pinning an older wrapper keeps working.
 legacy = json.loads(subprocess.check_output([
     "nix", "eval", "--impure", "--json", "--expr", '''let

@@ -260,6 +260,18 @@ let
       "${mboxEnv}/bin" ]
     (builtins.readFile ../../programs/mbox/host-loopback.sh.in));
 
+  # A published port lands on the guest's network address, so a service that binds
+  # the guest's loopback needs a guest-side forwarder. It decides what to do from
+  # the listening sockets it finds, not from any configuration, and leaves ports a
+  # service already serves on the network address untouched.
+  publishForwardSource = pkgs.writeText "mbox-publish-forward.py"
+    (builtins.readFile ../../programs/mbox/publish-forward.py);
+
+  publishGuest = pkgs.writeShellScript "mbox-publish-forward" (builtins.replaceStrings
+    [ "@@PYTHON@@" "@@PUBLISH_FORWARD@@" ]
+    [ "${pkgs.python3}/bin/python3" "${publishForwardSource}" ]
+    (builtins.readFile ../../programs/mbox/publish-forward.sh.in));
+
   nixGuest = pkgs.writeShellScript "mbox-nix-guest" (builtins.replaceStrings
     [ "@@NIX@@" ] [ "${pkgs.nix}" ]
     (builtins.readFile ../../programs/mbox/nix-guest.sh.in));
@@ -512,6 +524,7 @@ let
       "@@HOME_REPAIR@@"
       "@@PYTHON@@"
       "@@LOOPBACK_GUEST@@"
+      "@@PUBLISH_GUEST@@"
       "@@WAYPIPE@@"
       "@@DESKTOP_GUEST@@"
       "@@CLIPBOARD@@"
@@ -560,6 +573,7 @@ let
       "${../../programs/mbox/repair-home-metadata.py}"
       "${pkgs.python3}/bin/python3"
       "${loopbackGuest}"
+      "${publishGuest}"
       "${mboxWaypipe}/bin/waypipe"
       "${desktopGuest}"
       "${clipboard}/bin/mbox-clipboard"
