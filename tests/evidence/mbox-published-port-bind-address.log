@@ -1,0 +1,51 @@
+Published ports reach the guest's network address, not its loopback (2026-10-26)
+===============================================================================
+
+Found from the first real use of the new flag: `mbox-online --expose-port 4321`
+followed by an `npm run dev` that printed `http://localhost:4321/en/` and was not
+reachable from the host. The alias expands to
+
+  mbox --host-loopback -p 8000 -p 8012 -p 8080 -p 8545 --network open --expose-port 4321
+
+So the flag arrives after `--network open`, which is fine. Host-side assembly for
+exactly that shape:
+
+  $ mbox --dry-run /tmp --host-loopback -p 8000 ... --network open --expose-port 14321
+  ... --net public --net-rule allow:egress@host:tcp:8000 ... \
+      --port 127.0.0.1:14321:14321 -- /nix/store/...-mbox-host-loopback \ 8000\ 8012\ 8080\ 8545 ...
+
+The guest relay is handed only the `-p` ports, so publishing does not interact with
+--host-loopback at all.
+
+Real VM, same invocation, only the guest bind address differs:
+
+  A) guest: busybox httpd -f -p 14321 -h /tmp/www          # binds 0.0.0.0
+     $ curl -fsS http://127.0.0.1:14321/
+     A-PAGE
+
+  B) guest: busybox httpd -f -p 127.0.0.1:14322 -h /tmp/wwwb   # loopback only
+     guest netstat -tln:
+       tcp        0      0 127.0.0.1:14322         0.0.0.0:*               LISTEN
+     guest self-fetch:
+       $ busybox wget -q -O - http://127.0.0.1:14322/
+       B-PAGE
+     host fetch of the published port:
+       $ curl -fsS http://127.0.0.1:14322/
+       curl: (52) Empty reply from server
+
+msb's port publisher dials the guest's IPv4 address, not the guest's loopback
+(crates/network/lib/engine/ports/publisher.rs, the `guest_ip` field: "the common case
+-- most services bind 0.0.0.0 or dual-stack ::, both of which accept v4"). A
+loopback-only listener is therefore refused by the guest's own stack, and the host
+sees a reset instead of a timeout.
+
+That difference is the diagnostic worth remembering:
+
+  connection refused / timeout on the host   -> no host-side listener at all
+                                                (flag missing, or VM gone)
+  empty reply / ERR_EMPTY_RESPONSE           -> listener exists, guest bound 127.0.0.1
+
+Fixes are on the guest side, since the forwarding itself is correct: bind the dev
+server to 0.0.0.0 (or the guest's address), and confirm with
+`ss -tln | grep PORT` showing `0.0.0.0:PORT`/`*:PORT` rather than `127.0.0.1:PORT`.
+Documented in README.md and in `mbox --help` next to the option.

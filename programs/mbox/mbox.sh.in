@@ -101,6 +101,9 @@ Options:
                            connect to its default gateway, not 127.0.0.1.
                            --expose-port runs the other way: the host reaches a
                            guest listener, as the same-numbered loopback port.
+                           The guest listener must bind 0.0.0.0 (or the guest's
+                           own address); a guest 127.0.0.1 listener is not
+                           reachable through it.
                            As in sbox, -p is host access and --expose-port is
                            publishing; blocked mode still blocks egress.
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
