@@ -118,3 +118,40 @@ after `swaymsg 'input type:keyboard xkb_options compose:ralt'`. Ordinary Compose
 has no pinyin-style choice bar. The host's persistent Home Manager setting
 belongs in its configuration repo; it must be activated separately. No further
 guest keymap override is needed.
+
+## Keyboard loss after an mbox window resize: transaction focus repair
+
+User-visible fault: while typing in an mbox guest app, the keyboard
+occasionally goes dead; switching the input method away and back (the
+Super+2/Super+1 round-trip) restores it. A captured incident
+(wayland wire trace, 2026-10-27) anchors the failure to the instant the mbox
+window is re-tiled: the host sway resizes the waypipe surface, the guest sway
+applies the new output size in a transaction, and in the same batch the guest
+seat sends `wl_keyboard.leave` to the focused client without ever re-sending
+`enter`. The client keeps rendering but receives no keys. The incident had no
+input-method activity at all (zero fcitx5 ACTIVATE lines), so the IM grab is
+not the trigger; the seat focus drop is.
+
+Mechanism: sway's `seat_set_focus` early-returns when the focused node is
+unchanged, so any path that clears the wlr keyboard focus without changing
+sway's focus node leaves the seat in an inconsistent state (a mapped view is
+focused, `keyboard_state.focused_surface` is NULL). Nothing re-asserts focus
+because every later focus command targets the same node.
+
+Fix (`patches/mbox-sway-focus-repair.patch`, applied to the guest sway in
+`nestedSway`): after each applied transaction, every seat whose focused node
+is a mapped view but whose wlr seat has no keyboard focus (and which has a
+keyboard attached and no layer holding focus) gets
+`wlr_seat_keyboard_notify_enter` re-sent, plus a text-input relay refocus.
+The repair is a no-op in every consistent state, so it only heals the race.
+
+Verification: the patch applies cleanly to pristine sway 1.12, builds, and
+the harness (headless host sway + fcitx5 + waypipe + guest sway, scenarios
+smoke/focus/churn/storm) stays green with it: typing reaches the listener in
+every scenario, enter/leave pairs stay balanced (one server-side enter and
+one leave per run, the leave being the scenario's final unfocus). The
+harness's focus-churn storms did not reproduce the original race after the
+startup-socket discovery was made race-free, so the fix rests on the captured
+incident trace plus the mechanism analysis; production validation is the
+user's rebuild and normal use. The harness lives outside the repo
+(`/tmp/mbox-kb-hunt/`, rebuilt from this description if needed).

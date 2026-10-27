@@ -368,7 +368,10 @@ let
     '';
   });
   nestedSway = (pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; }).overrideAttrs (old: {
-    patches = (old.patches or []) ++ [ ../../patches/mbox-sway-caret.patch ];
+    patches = (old.patches or []) ++ [
+      ../../patches/mbox-sway-caret.patch
+      ../../patches/mbox-sway-focus-repair.patch
+    ];
     postPatch = (old.postPatch or "") + ''
       cp ${../../programs/mbox/sway-caret.c} sway/input/sway-caret.c
       cp ${../../programs/mbox/caret.h} sway/input/caret.h

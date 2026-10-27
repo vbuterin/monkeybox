@@ -1,0 +1,62 @@
+--- a/sway/desktop/transaction.c	2026-10-27 09:23:53.645122786 +0000
++++ a/sway/desktop/transaction.c	2026-10-27 09:23:57.879376308 +0000
+@@ -9,6 +9,8 @@
+ #include "sway/desktop/transaction.h"
+ #include "sway/input/cursor.h"
+ #include "sway/input/input-manager.h"
++#include "sway/input/seat.h"
++#include "sway/input/text_input.h"
+ #include "sway/output.h"
+ #include "sway/server.h"
+ #include "sway/tree/container.h"
+@@ -753,6 +755,42 @@
+ 
+ static void transaction_commit_pending(void);
+ 
++// A transaction that resizes the focused view can race the seat and drop the
++// wlr_seat keyboard focus (wl_keyboard.leave sent, no matching enter because
++// seat_set_focus early-returns when the focused node is unchanged). Keys then
++// stop reaching the focused client until the focus node changes. Detect the
++// inconsistent state - sway focuses a mapped view while the wlr seat has no
++// keyboard focus - and re-assert it after every applied transaction.
++static void repair_keyboard_focus(struct sway_seat *seat) {
++	if (!seat->has_focus || seat->focused_layer) {
++		return;
++	}
++	struct sway_node *focus = seat_get_focus(seat);
++	if (!focus || focus->type != N_CONTAINER) {
++		return;
++	}
++	struct sway_container *con = focus->sway_container;
++	if (!con || !con->view || !con->view->surface || !con->view->surface->mapped) {
++		return;
++	}
++	if (seat->wlr_seat->keyboard_state.focused_surface != NULL) {
++		return;
++	}
++	if (!wlr_seat_get_keyboard(seat->wlr_seat)) {
++		return;
++	}
++	sway_log(SWAY_DEBUG, "Re-asserting keyboard focus after transaction");
++	wlr_seat_keyboard_notify_enter(seat->wlr_seat, con->view->surface, NULL, 0, NULL);
++	sway_input_method_relay_set_focus(&seat->im_relay, con->view->surface);
++}
++
++static void repair_keyboard_focus_all(void) {
++	struct sway_seat *seat = NULL;
++	wl_list_for_each(seat, &server.input->seats, link) {
++		repair_keyboard_focus(seat);
++	}
++}
++
+ static void transaction_progress(void) {
+ 	if (!server.queued_transaction) {
+ 		return;
+@@ -763,6 +801,7 @@
+ 	transaction_apply(server.queued_transaction);
+ 	arrange_root(root);
+ 	cursor_rebase_all();
++	repair_keyboard_focus_all();
+ 	transaction_destroy(server.queued_transaction);
+ 	server.queued_transaction = NULL;
+ 
