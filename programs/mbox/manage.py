@@ -1,5 +1,6 @@
 """Host-only instance registry and bounded diagnostics. Never mount registry in guests."""
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -16,6 +17,16 @@ import tempfile
 import time
 
 GUEST_MEMORY = '@@GUEST_MEMORY@@'
+
+# Instance IDs are '<launcher pid>-<process start>'. Labels come from the
+# application name and are what a human sees in `list`; both address an instance.
+ID_PATTERN = r'[1-9][0-9]*-[0-9]+'
+
+# Guest memory and swap are sampled inside each VM, which costs a guest command
+# per instance. The panel refreshes every couple of seconds, so samples are
+# cached briefly; the cache is advisory state that `list` may always skip.
+GUEST_TTL_SECONDS = 15
+CACHE_NAME = 'guest-memory-cache.json'
 
 
 def directory():
@@ -40,7 +51,10 @@ def process(pid):
 
 
 def live(record):
-    p = process(record['pid'])
+    try:
+        p = process(record['pid'])
+    except OSError as error:
+        raise RuntimeError('instance has exited (or PID was reused)') from error
     if p['start'] != record['start'] or p['state'] in ('Z', 'X', 'x'):
         raise RuntimeError('instance has exited (or PID was reused)')
     return p
@@ -60,8 +74,16 @@ def register(pid, name, msb, engine, firmware, memory, label):
 
 
 def load(key):
-    if not re.fullmatch(r'[1-9][0-9]*-[0-9]+', key):
+    if not re.fullmatch(ID_PATTERN, key):
         raise ValueError('invalid instance ID')
+    record = read_record(key)
+    if key != f'{record["pid"]}-{record["start"]}':
+        raise RuntimeError('instance identity mismatch')
+    live(record)
+    return record
+
+
+def read_record(key):
     path = directory() / (key + '.json')
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd) as stream:
@@ -79,10 +101,41 @@ def load(key):
             raise ValueError('invalid instance field')
     if not re.fullmatch(r'mbox-[a-zA-Z0-9-]+', record['name']):
         raise ValueError('invalid sandbox name')
-    if key != f'{record["pid"]}-{record["start"]}':
-        raise RuntimeError('instance identity mismatch')
-    live(record)
     return record
+
+
+def resolve(key):
+    """An instance ID always works; a label must name exactly one live instance.
+
+    `list` shows labels because that is what a launcher was started as, so
+    diagnostics and termination accept them too. Stale records never win over
+    live ones, and an ambiguous label is refused rather than guessed.
+    """
+    if re.fullmatch(ID_PATTERN, key):
+        return key
+    matches = []
+    for path in sorted(directory().glob('*.json')):
+        if not re.fullmatch(ID_PATTERN, path.stem):
+            continue
+        try:
+            record = read_record(path.stem)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if record['label'] == key:
+            matches.append(path.stem)
+    live_ids = []
+    for candidate in matches:
+        try:
+            load(candidate)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        live_ids.append(candidate)
+    chosen = live_ids or matches
+    if len(chosen) == 1:
+        return chosen[0]
+    if not chosen:
+        raise ValueError(f"no instance labelled '{key}' is registered; see mbox-manage list")
+    raise ValueError(f"label '{key}' matches several instances: {', '.join(chosen)}; pass the instance ID instead")
 
 
 def tree(record):
@@ -107,18 +160,148 @@ def tree(record):
 
 def listing():
     items = []
+    records = []
     for path in sorted(directory().glob('*.json')):
+        if not re.fullmatch(ID_PATTERN, path.stem):
+            continue  # only instance records; cache and temp files are not rows
         try:
-            record = load(path.stem)
-            children = tree(record)
-            items.append(dict(id=path.stem, label=record['label'], name=record['name'],
-                              memory_limit=record['memory_limit'],
-                              host_rss_bytes=sum(p['rss_bytes'] for p in children),
-                              processes=len(children)))
+            records.append((path.stem, load(path.stem)))
         except (OSError, RuntimeError, ValueError, KeyError, IndexError):
             # Ignore stale entries; never signal a PID just because a file names it.
             continue
+
+    def sample(item):
+        key, record = item
+        try:
+            guest = query(record)
+            captured = int(time.time())
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+            guest, captured = None, int(time.time())
+        return key, guest, captured
+
+    samples, refreshed = {}, {}
+    if records:
+        cache = load_cache()
+        now = int(time.time())
+        pending = []
+        for key, record in records:
+            entry = cache.get(key)
+            if entry and now - entry['captured_unix_seconds'] < GUEST_TTL_SECONDS:
+                samples[key] = (entry['guest'], entry['captured_unix_seconds'])
+            else:
+                pending.append((key, record))
+        if pending:
+            # Guests are queried concurrently: one slow VM must not stretch the
+            # whole listing by the sum of every timeout.
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                for key, guest, captured in pool.map(sample, pending):
+                    samples[key] = (guest, captured)
+                    refreshed[key] = {'captured_unix_seconds': captured, 'guest': guest}
+        store_cache({**{key: {'captured_unix_seconds': captured, 'guest': guest}
+                         for key, (guest, captured) in samples.items() if key not in refreshed},
+                     **refreshed})
+
+    for key, record in records:
+        guest, captured = samples.get(key, (None, None))
+        children = tree(record)
+        fields = dict(id=key, label=record['label'], name=record['name'],
+                      memory_limit=record['memory_limit'],
+                      memory_limit_mib=memory_limit_mib(record['memory_limit']),
+                      host_rss_bytes=sum(p['rss_bytes'] for p in children),
+                      processes=len(children),
+                      guest_captured_unix_seconds=captured)
+        fields.update(guest_fields(guest))
+        items.append(fields)
     return items
+
+
+def guest_fields(guest):
+    """Fixed numeric guest counters only; absence stays None, never zero."""
+    if not isinstance(guest, dict):
+        return dict(memory_used_mib=None, swap_used_mib=None, swap_total_mib=None)
+    return dict(memory_used_mib=used_mib(guest.get('MemTotal_KiB'), guest.get('MemAvailable_KiB')),
+                swap_used_mib=used_mib(guest.get('SwapTotal_KiB'), guest.get('SwapFree_KiB')),
+                swap_total_mib=(None if guest.get('SwapTotal_KiB') is None
+                                else round(guest['SwapTotal_KiB'] / 1024)))
+
+
+def used_mib(total_kib, free_kib):
+    if total_kib is None or free_kib is None:
+        return None
+    return max(0, round((total_kib - free_kib) / 1024))
+
+
+def memory_limit_mib(text):
+    """Configured memory as MiB ('10240', '10240M', '8G' all work); else None."""
+    match = re.fullmatch(r'\s*([0-9]{1,7})\s*([GgMm])?([Ii]?[Bb])?\s*', str(text))
+    if not match:
+        return None
+    return int(match[1]) * (1024 if match[2] in ('G', 'g') else 1)
+
+
+def load_cache():
+    try:
+        fd = os.open(directory() / CACHE_NAME, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return {}
+    try:
+        with os.fdopen(fd) as stream:
+            entries = json.load(stream).get('guest-memory')
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(entries, dict):
+        return {}
+    clean = {}
+    for key, entry in entries.items():
+        if not re.fullmatch(ID_PATTERN, str(key)) or not isinstance(entry, dict):
+            continue
+        if type(entry.get('captured_unix_seconds')) is not int:
+            continue
+        guest = entry.get('guest')
+        if guest is not None and not (isinstance(guest, dict)
+                                      and all(value is None or type(value) is int for value in guest.values())):
+            continue
+        clean[key] = {'captured_unix_seconds': entry['captured_unix_seconds'], 'guest': guest}
+    return clean
+
+
+def store_cache(entries):
+    try:
+        fd, path = tempfile.mkstemp(prefix='.guest-memory-', suffix='.json', dir=directory())
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump({'guest-memory': entries}, stream)
+        os.replace(path, directory() / CACHE_NAME)
+    except OSError:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def format_listing(items):
+    """Aligned text for people; --json remains the machine-readable form."""
+    headers = ('ID', 'LABEL', 'MEMORY USED', 'SWAP', 'PROCS', 'NAME')
+    rows = []
+    for item in items:
+        limit = ('?' if item['memory_limit_mib'] is None else f"{item['memory_limit_mib']} MiB")
+        if item['memory_used_mib'] is None:
+            memory = f'- / {limit}'
+        else:
+            memory = f"{item['memory_used_mib']} / {limit}"
+        if item['swap_total_mib'] == 0:
+            swap = 'not enabled'
+        elif item['swap_total_mib'] is None or item['swap_used_mib'] is None:
+            swap = '-'
+        else:
+            swap = f"{item['swap_used_mib']} / {item['swap_total_mib']} MiB"
+        rows.append((item['id'], item['label'], memory, swap, str(item['processes']), item['name']))
+    widths = [max(len(row[column]) for row in (headers,) + tuple(rows)) for column in range(len(headers))]
+    lines = ['  '.join(header.ljust(width) for header, width in zip(headers, widths)).rstrip()]
+    lines += ['  '.join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip() for row in rows]
+    return '\n'.join(lines)
 
 
 def query(record):
@@ -224,6 +407,7 @@ def memory_counters(data):
 def diagnostics(key):
     record = load(key)
     data = dict(instance=key, label=record['label'], memory_limit=record['memory_limit'],
+                memory_limit_mib=memory_limit_mib(record['memory_limit']),
                 host_processes=tree(record), captured_unix_seconds=int(time.time()),
                 note='Host RSS sum may double-count shared pages; guest counters are guest-reported. No command lines, environment, clipboard or file contents collected.')
     try:
@@ -273,12 +457,15 @@ def kill_instance(key):
 
 def main():
     os.umask(0o077)
-    parser = argparse.ArgumentParser(description='Host-only Monkeybox management; JSON output')
+    parser = argparse.ArgumentParser(description='Host-only Monkeybox management')
     sub = parser.add_subparsers(dest='action', required=True)
-    sub.add_parser('list')
-    for action in ('diagnostics', 'kill', 'unregister'):
-        p = sub.add_parser(action)
-        p.add_argument('id')
+    list_parser = sub.add_parser('list', help='running instances; text table unless --json')
+    list_parser.add_argument('--json', action='store_true', help='machine-readable JSON array')
+    for action, help_text in (('diagnostics', 'memory counters for one instance'),
+                              ('kill', 'terminate one instance and its children'),
+                              ('unregister', 'remove one registry entry')):
+        p = sub.add_parser(action, help=help_text)
+        p.add_argument('id', help='instance ID, or the label shown by list')
     p = sub.add_parser('register')
     p.add_argument('pid', type=int)
     for name in ('name', 'msb', 'engine', 'firmware', 'memory', 'label'):
@@ -287,17 +474,27 @@ def main():
     if args.action == 'register':
         print(register(args.pid, args.name, args.msb, args.engine, args.firmware, args.memory, args.label))
     elif args.action == 'unregister':
-        if not re.fullmatch(r'[1-9][0-9]*-[0-9]+', args.id):
-            raise ValueError('invalid instance ID')
-        (directory() / (args.id + '.json')).unlink(missing_ok=True)
+        (directory() / (resolve(args.id) + '.json')).unlink(missing_ok=True)
+    elif args.action == 'list':
+        items = listing()
+        print(json.dumps(items, ensure_ascii=True) if args.json else format_listing(items))
     else:
-        value = listing() if args.action == 'list' else diagnostics(args.id) if args.action == 'diagnostics' else kill_instance(args.id)
-        print(json.dumps(value, ensure_ascii=True))
+        key = resolve(args.id)
+        result = diagnostics(key) if args.action == 'diagnostics' else kill_instance(key)
+        print(json.dumps(result, ensure_ascii=True))
 
 
-if __name__ == '__main__':
+def cli():
     try:
         main()
+    except (ValueError, RuntimeError) as error:
+        # Wrong instance, ambiguity and exited instances deserve their real reason.
+        print(json.dumps({'error': str(error)}))
+        sys.exit(1)
     except Exception:
         print(json.dumps({'error': 'Monkeybox operation failed: instance exited, access refused, or runtime unavailable.'}))
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    cli()

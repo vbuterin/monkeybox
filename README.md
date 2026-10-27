@@ -141,6 +141,27 @@ The adapter
 installs the wrapper/broker and KVM group permissions; it does not install Sway
 bindings, Noctalia patches or host-service grants.
 
+## Managing instances
+
+Each running sandbox registers itself at `/run/user/$UID/monkeybox`; `mbox-manage`
+is host-side tooling over that registry:
+
+- `mbox-manage list` prints an aligned table (ID, label, memory used, swap,
+  process count, name); `mbox-manage list --json` emits the machine-readable
+  array with the same data plus raw fields.
+- Memory and swap are sampled inside each guest and cached for about 15
+  seconds. A guest that is still booting or unreachable shows `-`, never 0.
+  Swap that the instance runs without reads `not enabled`. Host RSS stays in
+  the JSON (`host_rss_bytes`) but can double-count shared pages and is not
+  shown in the table.
+- `diagnostics`, `kill` and `unregister` accept an instance ID or the label
+  shown by `list`. A label must identify exactly one running instance;
+  ambiguity and stale entries are refused with an explanation instead of a
+  generic failure.
+- `diagnostics` writes allowlisted numeric counters to a private file in
+  `/tmp` and prints its path. No command lines, environments, clipboard
+  payloads or file contents are collected.
+
 ## Boundaries and limitations
 
 Read [security](SECURITY.md), [clipboard integration](docs/mbox-clipboard.md),

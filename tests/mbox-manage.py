@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Private registry/process fixtures only; never enumerate/kill real instances."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -159,6 +162,205 @@ cancel_run() { echo UNSAFE-NAME-STOP >> "$LOG"; exit 1; }
                 p.wait()
             launcher.stdout.close()
             # Child termination was requested through a pinned pidfd by the test.
+
+
+GUEST_SNAPSHOT = {
+    'MemTotal_KiB': 4194304,        # 4096 MiB
+    'MemAvailable_KiB': 1793024,    # used: exactly 2345 MiB
+    'SwapTotal_KiB': 8388608,       # 8192 MiB
+    'SwapFree_KiB': 8388608,
+    'pswpin': 0, 'pswpout': 0, 'oom_kill': None,
+}
+
+
+class Reporting(unittest.TestCase):
+    """Label addressing, normalized sizes, guest samples with a short TTL, text table."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.registry = Path(self.tmp.name)
+        p = patch.object(m, 'directory', return_value=self.registry)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def labelled(self, label, pid=None, memory='4096'):
+        """One record per real helper process: registry keys are '<pid>-<start>'."""
+        if pid is None:
+            helper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
+            self.addCleanup(helper.wait)
+            self.addCleanup(helper.terminate)
+            pid = helper.pid
+        return m.register(pid, 'mbox-fixture', '/nix/store/fixture/bin/msb',
+                          '/private/engine', '/nix/store/firmware.so', memory, f'/app/{label}')
+
+    def test_label_resolves_only_when_unique_and_live(self):
+        firefox = self.labelled('firefox')
+        self.assertEqual(m.resolve('firefox'), firefox)
+        self.assertEqual(m.resolve(firefox), firefox)  # an ID is always itself
+        self.labelled('shell')
+        self.labelled('shell')
+        with self.assertRaisesRegex(ValueError, 'matches several instances'):
+            m.resolve('shell')
+        with self.assertRaisesRegex(ValueError, 'no instance labelled'):
+            m.resolve('nope')
+        # A stale record never wins while a live one carries the same label.
+        ghost = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        self.addCleanup(ghost.wait)
+        self.addCleanup(ghost.terminate)
+        ghost_key = self.labelled('firefox', pid=ghost.pid)
+        ghost.terminate()
+        ghost.wait(timeout=5)
+        self.assertEqual(m.resolve('firefox'), firefox)
+        # Only the stale match remains: resolve hands back its ID so load()
+        # explains that the instance has exited.
+        (self.registry / (firefox + '.json')).unlink()
+        self.assertEqual(m.resolve('firefox'), ghost_key)
+        with self.assertRaisesRegex(RuntimeError, 'exited'):
+            m.load(m.resolve('firefox'))
+
+    def test_unregister_accepts_label(self):
+        key = self.labelled('firefox')
+        out = io.StringIO()
+        with patch.object(sys, 'argv', ['mbox-manage', 'unregister', 'firefox']), \
+                contextlib.redirect_stdout(out):
+            m.main()
+        self.assertFalse((self.registry / (key + '.json')).exists())
+
+    def test_memory_limit_normalizes_to_mib(self):
+        for text, expected in (('10240', 10240), ('10240M', 10240), ('8G', 8192),
+                               ('8192MiB', 8192), ('512m', 512), ('', None), ('lots', None)):
+            self.assertEqual(m.memory_limit_mib(text), expected, text)
+
+    def test_guest_fields_are_derived_or_absent(self):
+        self.assertEqual(m.guest_fields(GUEST_SNAPSHOT),
+                         dict(memory_used_mib=2345, swap_used_mib=0, swap_total_mib=8192))
+        self.assertEqual(m.guest_fields({'MemTotal_KiB': 1024, 'SwapTotal_KiB': 0}),
+                         dict(memory_used_mib=None, swap_used_mib=None, swap_total_mib=0))
+        self.assertEqual(m.guest_fields(None),
+                         dict(memory_used_mib=None, swap_used_mib=None, swap_total_mib=None))
+        self.assertEqual(m.guest_fields({'MemTotal_KiB': 1024, 'MemAvailable_KiB': 2048})['memory_used_mib'], 0)
+
+    def listing_once(self, calls):
+        def query(record):
+            calls.append(record['label'])
+            return dict(GUEST_SNAPSHOT)
+        with patch.object(m, 'query', side_effect=query):
+            return m.listing()
+
+    def test_list_samples_guests_once_within_ttl(self):
+        self.labelled('firefox')
+        calls = []
+        first = self.listing_once(calls)
+        second = self.listing_once(calls)
+        self.assertEqual(calls, ['firefox'], 'guest must be sampled once, then cached')
+        for items in (first, second):
+            self.assertEqual(items[0]['memory_used_mib'], 2345)
+            self.assertEqual(items[0]['memory_limit_mib'], 4096)
+            self.assertEqual(items[0]['swap_used_mib'], 0)
+            self.assertEqual(items[0]['swap_total_mib'], 8192)
+        cache = json.loads((self.registry / m.CACHE_NAME).read_text())['guest-memory']
+        captured = cache[first[0]['id']]['captured_unix_seconds']
+        cache[first[0]['id']]['captured_unix_seconds'] = captured - m.GUEST_TTL_SECONDS - 1
+        (self.registry / m.CACHE_NAME).write_text(json.dumps({'guest-memory': cache}))
+        self.listing_once(calls)
+        self.assertEqual(calls, ['firefox', 'firefox'], 'expired sample must be refreshed')
+
+    def test_guest_failure_is_reported_not_hidden(self):
+        self.labelled('firefox')
+        with patch.object(m, 'query', side_effect=RuntimeError('timeout')):
+            items = m.listing()
+        self.assertIsNone(items[0]['memory_used_mib'])
+        self.assertEqual(items[0]['memory_limit_mib'], 4096)
+        # A failed sample is also cached briefly, so a booting VM is not hammered.
+        with patch.object(m, 'query', side_effect=AssertionError('must stay cached')):
+            self.assertEqual(m.listing()[0]['memory_used_mib'], None)
+
+    def test_listing_ignores_cache_and_temp_files(self):
+        key = self.labelled('firefox')
+        (self.registry / (m.CACHE_NAME)).write_text('{"guest-memory": {}}')
+        (self.registry / 'not-an-instance.json').write_text('{}')
+        (self.registry / (key + '.json')).chmod(0o600)
+        items = self.listing_once([])
+        self.assertEqual([item['id'] for item in items], [key])
+
+    def run_cli(self, *argv, query=None):
+        """Run the CLI in-process; guest samples default to the healthy fixture."""
+        out = io.StringIO()
+        if query is None:
+            query = dict(GUEST_SNAPSHOT)
+        if isinstance(query, BaseException):
+            patcher = patch.object(m, 'query', side_effect=query)
+        else:
+            patcher = patch.object(m, 'query', return_value=query)
+        with patcher, patch.object(sys, 'argv', ['mbox-manage', *argv]), contextlib.redirect_stdout(out):
+            m.cli()
+        return out.getvalue()
+
+    def test_cli_pretty_by_default_and_json_on_flag(self):
+        self.labelled('firefox')
+        table = self.run_cli('list')
+        self.assertIn('ID', table.splitlines()[0])
+        self.assertIn('firefox', table)
+        self.assertIn('2345 / 4096 MiB', table)
+        self.assertIn('0 / 8192 MiB', table)
+        self.assertNotIn('[', table)  # not JSON
+        payload = json.loads(self.run_cli('list', '--json'))
+        self.assertEqual(payload[0]['label'], 'firefox')
+        self.assertEqual(payload[0]['memory_used_mib'], 2345)
+
+    def test_cli_pretty_reports_absent_guest_data(self):
+        self.labelled('firefox')
+        table = self.run_cli('list', query=RuntimeError('timeout'))
+        self.assertIn('- / 4096 MiB', table)
+        self.assertIn('-     ', table)  # swap column unknown, not zero
+        # The failed sample was cached for the TTL; drop it to exercise swap=0.
+        (self.registry / m.CACHE_NAME).unlink()
+        disabled = dict(GUEST_SNAPSHOT, SwapTotal_KiB=0)
+        self.assertIn('not enabled', self.run_cli('list', query=disabled))
+
+    def test_cli_errors_carry_their_reason(self):
+        self.labelled('shell')
+        self.labelled('shell')
+        out = io.StringIO()
+        with patch.object(sys, 'argv', ['mbox-manage', 'diagnostics', 'shell']), \
+                contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as raised:
+                m.cli()
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn('matches several instances', json.loads(out.getvalue())['error'])
+
+    def test_cli_prints_real_reason_for_exited_instance(self):
+        helper = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
+        self.addCleanup(helper.wait)
+        self.addCleanup(helper.terminate)
+        key = self.labelled('ghost', pid=helper.pid)
+        helper.terminate()
+        helper.wait(timeout=5)
+        self.assertEqual(m.resolve('ghost'), key)
+        out = io.StringIO()
+        with patch.object(sys, 'argv', ['mbox-manage', 'diagnostics', 'ghost']), \
+                contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit):
+                m.cli()
+        self.assertEqual(json.loads(out.getvalue())['error'],
+                         'instance has exited (or PID was reused)')
+
+    def test_format_columns_stay_aligned(self):
+        self.labelled('firefox')
+        self.labelled('a-very-long-application-label-here')
+        table = self.run_cli('list')
+        rows = table.splitlines()
+        columns = [line.split('  ') for line in rows]
+        for row in columns[1:]:
+            self.assertEqual(len([cell for cell in row if cell != '']), 6, row)
+
+    def test_diagnostics_report_carries_mib_limit(self):
+        key = self.labelled('firefox', memory='10240M')
+        with patch.object(m, 'query', return_value=dict(GUEST_SNAPSHOT)):
+            result = m.diagnostics(key)
+        Path(result['path']).unlink()
+        self.assertEqual(json.loads(result['text'])['memory_limit_mib'], 10240)
 
 
 if __name__ == '__main__':
