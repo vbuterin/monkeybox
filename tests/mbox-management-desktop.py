@@ -68,8 +68,10 @@ try:
     records = list(registry.glob(f'{instance.pid}-*.json'))
     assert len(records) == 1, records
     key = records[0].stem
-    def manage(op):
-        return json.loads(subprocess.check_output([manager, op, key], env=env, timeout=15))
+    def manage(op, *flags):
+        # The CLI prints a text report by default; the registry-facing JSON form
+        # is what this fixture parses.
+        return json.loads(subprocess.check_output([manager, op, '--json', *flags, key], env=env, timeout=15))
     report = manage('diagnostics')
     data = json.loads(report['text'])
     assert 'guest' in data and data['guest']['MemTotal_KiB'] > 0, data

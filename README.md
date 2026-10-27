@@ -158,6 +158,10 @@ is host-side tooling over that registry:
   shown by `list`. A label must identify exactly one running instance;
   ambiguity and stale entries are refused with an explanation instead of a
   generic failure.
+- All commands print human-readable text by default. `diagnostics --json` and
+  `kill --json` emit the single-line JSON that tooling parses (the same shape
+  the Noctalia plugin consumes); `unregister` stays silent in both modes and
+  errors always print as `{"error": ...}`.
 - `diagnostics` writes allowlisted numeric counters to a private file in
   `/tmp` and prints its path. No command lines, environments, clipboard
   payloads or file contents are collected.

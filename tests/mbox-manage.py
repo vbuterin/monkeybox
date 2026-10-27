@@ -309,6 +309,39 @@ class Reporting(unittest.TestCase):
         self.assertEqual(payload[0]['label'], 'firefox')
         self.assertEqual(payload[0]['memory_used_mib'], 2345)
 
+    def test_cli_diagnostics_pretty_by_default_and_json_on_flag(self):
+        key = self.labelled('firefox')
+        report = self.run_cli('diagnostics', key)
+        self.assertIn('firefox', report.splitlines()[0])
+        self.assertIn('Memory limit  4096 MiB', report)
+        self.assertIn('Guest memory  2345 MiB used', report)
+        self.assertIn('Guest swap    0 / 8192 MiB', report)
+        self.assertIn('Saved to      /tmp/diagnostics-', report)
+        self.assertNotIn('"instance"', report)  # not JSON
+        payload = json.loads(self.run_cli('diagnostics', key, '--json'))
+        Path(payload['path']).unlink()
+        self.assertEqual(payload['path'], '/tmp/' + Path(payload['path']).name)
+        report = json.loads(payload['text'])
+        self.assertEqual(report['instance'], key)
+        self.assertEqual(report['guest']['MemTotal_KiB'], 4194304)
+
+    def test_cli_diagnostics_pretty_reports_guest_failure_and_swap_disabled(self):
+        key = self.labelled('shell', memory='10G')
+        report = self.run_cli('diagnostics', key, query=RuntimeError('timeout'))
+        self.assertIn('Guest query   ', report)
+        self.assertIn('Memory limit  10240 MiB', report)
+        disabled = self.run_cli('diagnostics', key, query=dict(GUEST_SNAPSHOT, SwapTotal_KiB=0))
+        self.assertIn('Guest swap    not enabled', disabled)
+
+    def test_cli_kill_pretty_by_default_and_json_on_flag(self):
+        # The dispatch is what differs per flag; the real termination path has
+        # its own process-level test, so the operation is stubbed here.
+        key = self.labelled('firefox')
+        with patch.object(m, 'kill_instance', return_value=dict(message='Termination requested.')):
+            self.assertEqual(self.run_cli('kill', key), 'Termination requested.\n')
+            payload = json.loads(self.run_cli('kill', key, '--json'))
+        self.assertEqual(payload['message'], 'Termination requested.')
+
     def test_cli_pretty_reports_absent_guest_data(self):
         self.labelled('firefox')
         table = self.run_cli('list', query=RuntimeError('timeout'))

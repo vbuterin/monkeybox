@@ -304,6 +304,37 @@ def format_listing(items):
     return '\n'.join(lines)
 
 
+def format_diagnostics(result):
+    """Aligned text for people; --json remains the machine-readable form."""
+    report = json.loads(result['text'])
+    guest = report.get('guest')
+    guest = guest if isinstance(guest, dict) else {}
+    processes = report['host_processes']
+    rss_mib = round(sum(p['rss_bytes'] for p in processes) / (1024 * 1024))
+    limit = report['memory_limit_mib']
+    lines = [f"{report['label']}  (instance {report['instance']})",
+             'Memory limit  ' + ('?' if limit is None else f'{limit} MiB'),
+             f'Host memory   {rss_mib} MiB RSS across {len(processes)} processes']
+    for p in processes:
+        rss = round(p['rss_bytes'] / (1024 * 1024))
+        lines.append(f"  pid {p['pid']:<7} state {p['state']:<3} rss {rss} MiB")
+    if 'guest_error' in report:
+        lines.append('Guest query   ' + report['guest_error'])
+    else:
+        used = used_mib(guest.get('MemTotal_KiB'), guest.get('MemAvailable_KiB'))
+        swap_total = guest.get('SwapTotal_KiB')
+        swap_used = used_mib(guest.get('SwapTotal_KiB'), guest.get('SwapFree_KiB'))
+        lines.append('Guest memory  ' + ('-' if used is None else f'{used} MiB used'))
+        if swap_total == 0:
+            lines.append('Guest swap    not enabled')
+        else:
+            lines.append('Guest swap    ' + ('-' if swap_used is None or swap_total is None
+                                             else f'{swap_used} / {round(swap_total / 1024)} MiB'))
+    lines.append('Saved to      ' + result['path'])
+    lines.append(report['note'])
+    return '\n'.join(lines)
+
+
 def query(record):
     # Only a trusted installed msb executable can run on the host. Registered
     # engine/firmware paths come from the host launcher, never the guest.
@@ -461,17 +492,20 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     list_parser = sub.add_parser('list', help='running instances; text table unless --json')
     list_parser.add_argument('--json', action='store_true', help='machine-readable JSON array')
-    for action, help_text in (('diagnostics', 'memory counters for one instance'),
-                              ('kill', 'terminate one instance and its children'),
-                              ('unregister', 'remove one registry entry')):
+    for action, help_text in (('diagnostics', 'memory counters for one instance; text report unless --json'),
+                              ('kill', 'terminate one instance and its children; text unless --json')):
         p = sub.add_parser(action, help=help_text)
+        p.add_argument('--json', action='store_true', help='machine-readable JSON')
         p.add_argument('id', help='instance ID, or the label shown by list')
+    p = sub.add_parser('unregister', help='remove one registry entry')
+    p.add_argument('id', help='instance ID, or the label shown by list')
     p = sub.add_parser('register')
     p.add_argument('pid', type=int)
     for name in ('name', 'msb', 'engine', 'firmware', 'memory', 'label'):
         p.add_argument(name)
     args = parser.parse_args()
     if args.action == 'register':
+        # The launcher captures this key; it stays raw regardless of output style.
         print(register(args.pid, args.name, args.msb, args.engine, args.firmware, args.memory, args.label))
     elif args.action == 'unregister':
         (directory() / (resolve(args.id) + '.json')).unlink(missing_ok=True)
@@ -480,8 +514,12 @@ def main():
         print(json.dumps(items, ensure_ascii=True) if args.json else format_listing(items))
     else:
         key = resolve(args.id)
-        result = diagnostics(key) if args.action == 'diagnostics' else kill_instance(key)
-        print(json.dumps(result, ensure_ascii=True))
+        if args.action == 'diagnostics':
+            result = diagnostics(key)
+            print(json.dumps(result, ensure_ascii=True) if args.json else format_diagnostics(result))
+        else:
+            result = kill_instance(key)
+            print(json.dumps(result, ensure_ascii=True) if args.json else result['message'])
 
 
 def cli():
