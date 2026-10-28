@@ -1,6 +1,99 @@
---- a/sway/input/seat.c	2026-10-28 11:35:58.250050162 +0000
-+++ b/sway/input/seat.c	2026-10-28 11:35:58.245901422 +0000
-@@ -1130,6 +1130,22 @@
+--- a/sway/input/seat.c
++++ b/sway/input/seat.c
+@@ -509,6 +509,79 @@
+ 	collect_focus_iter(&container->node, data);
+ }
+ 
++// Dumb keyboard self-heal. A virtual keyboard join/exit (clipboard helper
++// chords, wtype, nested-compositor keymap relays) can desync the focused
++// client's wl_keyboard state while every refocus path stays silent: this
++// file's same-node early return, wlroots' focused_surface early return, and
++// the keyboard-group leave dance all swallow the recovery. The observable
++// signature is the seat keyboard's keymap churning; once it settles, a fresh
++// leave+enter pair to the still-focused surface resyncs the client. Clients
++// tolerate enter/leave pairs, and a fresh enter alone provably heals.
++static struct {
++	struct xkb_keymap *keymap;
++	int64_t deadline;
++	int retries;
++	bool pending;
++} mbox_heal;
++
++static int64_t mbox_heal_now(void) {
++	struct timespec t;
++	clock_gettime(CLOCK_MONOTONIC, &t);
++	return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
++}
++
++static void mbox_heal_seat(struct sway_seat *seat) {
++	struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(seat->wlr_seat);
++	struct xkb_keymap *keymap = keyboard ? keyboard->keymap : NULL;
++	int64_t now = mbox_heal_now();
++	if (keymap != mbox_heal.keymap) {
++		mbox_heal.keymap = keymap;
++		mbox_heal.pending = true;
++		mbox_heal.retries = 0;
++		// Let a whole chord (join + exit) finish before healing.
++		mbox_heal.deadline = now + 200;
++		return;
++	}
++	if (!mbox_heal.pending || now < mbox_heal.deadline) {
++		return;
++	}
++	struct wlr_surface *surface = seat->wlr_seat->keyboard_state.focused_surface;
++	if (!surface || !surface->mapped || seat->focused_layer) {
++		mbox_heal.pending = false;
++		return;
++	}
++	if (keyboard && keyboard->num_keycodes) {
++		// A chord or the user's own typing is mid-flight; retry briefly.
++		if (++mbox_heal.retries > 20) {
++			mbox_heal.pending = false;
++			return;
++		}
++		mbox_heal.deadline = now + 100;
++		return;
++	}
++	mbox_heal.pending = false;
++	sway_log(SWAY_DEBUG, "mbox heal: re-entering focused surface after keyboard churn");
++	wlr_seat_keyboard_notify_clear_focus(seat->wlr_seat);
++	wlr_seat_keyboard_notify_enter(seat->wlr_seat, surface, NULL, 0,
++		keyboard ? &keyboard->modifiers : NULL);
++	sway_input_method_relay_set_focus(&seat->im_relay, surface);
++}
++
++static struct wl_event_source *mbox_heal_timer;
++
++static int mbox_heal_tick(void *data) {
++	if (server.input) {
++		struct sway_seat *seat = NULL;
++		wl_list_for_each(seat, &server.input->seats, link) {
++			if (strcmp(seat->wlr_seat->name, "seat0") == 0) {
++				mbox_heal_seat(seat);
++			}
++		}
++	}
++	if (mbox_heal_timer) wl_event_source_timer_update(mbox_heal_timer, 30);
++	return 0;
++}
++
+ struct sway_seat *seat_create(const char *seat_name) {
+ 	struct sway_seat *seat = calloc(1, sizeof(struct sway_seat));
+ 	if (!seat) {
+@@ -531,6 +604,12 @@
+ 		return NULL;
+ 	}
+ 	seat->wlr_seat->data = seat;
++	if (!mbox_heal_timer) {
++		mbox_heal_timer = wl_event_loop_add_timer(server.wl_event_loop, mbox_heal_tick, NULL);
++	}
++	if (mbox_heal_timer) {
++		wl_event_source_timer_update(mbox_heal_timer, 30);
++	}
+ 
+ 	seat->cursor = sway_cursor_create(seat);
+ 	if (!seat->cursor) {
+@@ -1130,6 +1209,22 @@
  static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *node) {
  	struct sway_node *last_focus = seat_get_focus(seat);
  	if (last_focus == node) {
