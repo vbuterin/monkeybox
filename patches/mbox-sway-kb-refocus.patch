@@ -1,0 +1,25 @@
+--- a/sway/input/seat.c	2026-10-28 11:35:58.250050162 +0000
++++ b/sway/input/seat.c	2026-10-28 11:35:58.245901422 +0000
+@@ -1130,6 +1130,22 @@
+ static void seat_set_workspace_focus(struct sway_seat *seat, struct sway_node *node) {
+ 	struct sway_node *last_focus = seat_get_focus(seat);
+ 	if (last_focus == node) {
++		// Virtual keyboard join/exit (clipboard helper chords, wtype, input
++		// method grab cycles) can desync the client's wl_keyboard state while
++		// the seat still considers this node focused: the client is left
++		// holding no wl_keyboard.enter, or a NO_KEYMAP keymap, and every
++		// same-node refocus was swallowed by this early return. Force a clean
++		// leave+enter so the client resyncs and typing resumes.
++		if (node && node->type == N_CONTAINER && node->sway_container->view &&
++				!seat->focused_layer) {
++			struct sway_view *view = node->sway_container->view;
++			if (view->surface && view->surface->mapped &&
++					seat->wlr_seat->keyboard_state.focused_surface) {
++				wlr_seat_keyboard_notify_clear_focus(seat->wlr_seat);
++				seat_keyboard_notify_enter(seat, view->surface);
++				sway_input_method_relay_set_focus(&seat->im_relay, view->surface);
++			}
++		}
+ 		return;
+ 	}
+ 

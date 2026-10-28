@@ -371,6 +371,9 @@ let
     patches = (old.patches or []) ++ [
       ../../patches/mbox-sway-caret.patch
       ../../patches/mbox-sway-focus-repair.patch
+      # Guest copies type with wtype chords (Ctrl+C/Ctrl+V relays); without this
+      # the virtual keyboard join/exit desyncs wl_keyboard focus and typing dies.
+      ../../patches/mbox-sway-kb-refocus.patch
     ];
     postPatch = (old.postPatch or "") + ''
       cp ${../../programs/mbox/sway-caret.c} sway/input/sway-caret.c
