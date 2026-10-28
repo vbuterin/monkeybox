@@ -155,3 +155,29 @@ startup-socket discovery was made race-free, so the fix rests on the captured
 incident trace plus the mechanism analysis; production validation is the
 user's rebuild and normal use. The harness lives outside the repo
 (`/tmp/mbox-kb-hunt/`, rebuilt from this description if needed).
+
+## `--host-loopback` dies in a traceback when the guest has no IPv4 network
+
+`mbox --host-loopback` relays granted host ports onto the guest's own loopback
+by forwarding to the guest's default gateway, the host-side end of the virtual
+network. The gateway came from a Python one-liner over `/proc/net/route` that
+assumed a default route always exists.
+
+The engine, however, assigns the guest an IPv4 only when the *host* itself can
+select an IPv4 route at sandbox start (a UDP `connect()` probe to 192.0.2.1 in
+the network engine). Launching an mbox while the host network was down or still
+coming up — observed with `mbox-online` — boots the guest with no IPv4 address
+and no default route, and the relay died with a bare `StopIteration`, killing
+the whole sandbox start with no clue about the cause.
+
+The gateway probe in `host-loopback.sh` now reads the same table in three
+steps: the default route when it has a real gateway; otherwise the /30 guest
+subnet layout, whose gateway is the subnet address plus one (covering an
+on-link default and a missing default alike, and never a wider subnet); and
+when the guest has no IPv4 network at all, a plain one-line failure —
+`mbox: guest has no IPv4 network (the host had no IPv4 route while the sandbox
+was starting); host loopback relay cannot start — retry once the host network
+is up` — so the sandbox start fails fast with a diagnosis instead of a
+traceback. The probe is tested against fabricated route tables in
+`tests/mbox-network.py`, including the live-shaped case of a default route and
+a connected subnet on the same interface.

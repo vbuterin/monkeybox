@@ -127,5 +127,62 @@ legacy = json.loads(subprocess.check_output([
     }).config;
     in c.programs.mbox.wrapper.text'''], cwd=repo, text=True))
 assert "ALLOW=(8012)" in legacy
+
+# The guest-side loopback relay resolves the host-side gateway from the guest's
+# own routing table: the default route when present, otherwise the /30 subnet
+# layout (network + 1), and a plain failure when the guest has no IPv4 network
+# at all — the sandbox booted while the host had no IPv4 route, and a traceback
+# from a route probe is not a diagnosis.
+import os
+import tempfile
+loopback_script = (repo / "programs/mbox/host-loopback.sh.in").read_text()
+probe = loopback_script.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+def probe_gateway(route_table):
+    """Run the wrapper's own gateway probe against a fabricated route table."""
+    handle = tempfile.NamedTemporaryFile('w', suffix='-route', delete=False)
+    handle.write(route_table)
+    handle.close()
+    try:
+        done = subprocess.run([sys.executable, '-', handle.name], input=probe,
+                              capture_output=True, text=True)
+    finally:
+        os.unlink(handle.name)
+    return done.returncode, done.stdout.strip(), done.stderr.strip()
+
+# The common case: a default route through the virtual host (little-endian hex).
+code, gateway, err = probe_gateway(
+    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+    "eth0\t050010AC\t00000000\t0003\t0\t0\t0\tFFFFFFFC\n"
+    "eth0\t00000000\t050010AC\t0003\t0\t0\t0\t00000000\n")
+assert (code, gateway) == (0, '172.16.0.5'), (code, gateway, err)
+assert err == '', err
+
+# No default route: the /30 connected route still names the gateway (network + 1).
+code, gateway, err = probe_gateway(
+    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+    "eth0\t040010AC\t00000000\t0003\t0\t0\t0\tFFFFFFFC\n")
+assert (code, gateway) == (0, '172.16.0.5'), (code, gateway, err)
+
+# An on-link (gateway-less) default must not be mistaken for a usable gateway.
+code, gateway, err = probe_gateway(
+    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+    "eth0\t00000000\t00000000\t0003\t0\t0\t0\t00000000\n"
+    "eth0\t040010AC\t00000000\t0003\t0\t0\t0\tFFFFFFFC\n")
+assert (code, gateway) == (0, '172.16.0.5'), (code, gateway, err)
+
+# A wider connected subnet is not the microsandbox /30 layout; no invention.
+code, gateway, err = probe_gateway(
+    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+    "eth0\t0000A8C0\t00000000\t0003\t0\t0\t0\t00FFFFFF\n")
+assert code != 0 and 'no IPv4 network' in err, (code, gateway, err)
+
+# The host was offline (or still coming up): the guest got no IPv4 at all.
+code, gateway, err = probe_gateway(
+    "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n")
+assert code != 0 and 'no IPv4 network' in err, (code, gateway, err)
+assert 'traceback' not in err.lower(), err
+
 print("PASS: actual mbox port assembly in both directions, blocked-mode grants, "
-      "invalid port rejection, evaluated default ports, renamed option alias")
+      "invalid port rejection, evaluated default ports, renamed option alias, "
+      "loopback relay gateway probe and its plain no-network failure")

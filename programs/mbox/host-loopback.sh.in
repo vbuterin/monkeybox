@@ -10,9 +10,36 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-gateway=$(@@PYTHON@@ -c 'import socket,struct
-rows=open("/proc/net/route").read().splitlines()[1:]
-print(next(socket.inet_ntoa(struct.pack("<I",int(r.split()[2],16))) for r in rows if r.split()[1]=="00000000"))')
+# The relay's upstream is the guest's default gateway — the host-side end of
+# the virtual network. The guest boots without an IPv4 route when the host had
+# no IPv4 route while the sandbox was starting (network down or still coming
+# up). That must fail with a plain line instead of a traceback from a probe
+# that assumed the route was there; a /30 guest subnet still names its gateway
+# (network address + 1) if only the default route is missing.
+gateway=$(@@PYTHON@@ - /proc/net/route <<'PY'
+import socket, struct, sys
+
+rows = open(sys.argv[1]).read().splitlines()[1:]
+for row in rows:
+    fields = row.split()
+    # Destination 0.0.0.0 with a real gateway is the default route.
+    if len(fields) > 7 and fields[1] == '00000000' and fields[2] != '00000000':
+        print(socket.inet_ntoa(struct.pack('<I', int(fields[2], 16))))
+        raise SystemExit(0)
+for row in rows:
+    fields = row.split()
+    if len(fields) > 7 and fields[2] == '00000000' and fields[7] == 'FFFFFFFC':
+        # /proc/net/route stores addresses little-endian; the gateway is the
+        # last octet of the subnet address plus one, not a bare integer + 1.
+        network = socket.inet_ntoa(struct.pack('<I', int(fields[1], 16)))
+        octets = network.split('.')
+        print('.'.join(octets[:3] + [str(int(octets[3]) + 1)]))
+        raise SystemExit(0)
+raise SystemExit('mbox: guest has no IPv4 network (the host had no IPv4 route '
+                 'while the sandbox was starting); host loopback relay cannot '
+                 'start — retry once the host network is up')
+PY
+)
 for port in $ports; do
     @@SOCAT@@ "TCP4-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork" "TCP4:$gateway:$port" &
     pids+=("$!")
