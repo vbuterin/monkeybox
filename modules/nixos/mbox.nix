@@ -368,13 +368,23 @@ let
     '';
   });
   nestedSway = (pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; }).overrideAttrs (old: {
-    patches = (old.patches or []) ++ [
-      ../../patches/mbox-sway-caret.patch
-      ../../patches/mbox-sway-focus-repair.patch
-      # Guest copies type with wtype chords (Ctrl+C/Ctrl+V relays); without this
-      # the virtual keyboard join/exit desyncs wl_keyboard focus and typing dies.
-      ../../patches/mbox-sway-kb-refocus.patch
-    ];
+    # Note: the parent config's sway overlay already injects
+    # mbox-sway-kb-refocus.patch into the base sway-unwrapped (monkeybox
+    # follows the host nixpkgs), so only append it when absent to avoid a
+    # double application. Guest copies type with wtype chords (Ctrl+C/Ctrl+V
+    # relays); without the patch the virtual keyboard join/exit desyncs
+    # wl_keyboard focus and typing dies.
+    patches = let
+      ps = old.patches or [];
+      haveRefocus = builtins.any
+        (p: lib.hasSuffix "mbox-sway-kb-refocus.patch" (toString p)) ps;
+    in
+      ps
+      ++ lib.optionals (!haveRefocus) [ ../../patches/mbox-sway-kb-refocus.patch ]
+      ++ [
+        ../../patches/mbox-sway-caret.patch
+        ../../patches/mbox-sway-focus-repair.patch
+      ];
     postPatch = (old.postPatch or "") + ''
       cp ${../../programs/mbox/sway-caret.c} sway/input/sway-caret.c
       cp ${../../programs/mbox/caret.h} sway/input/caret.h
