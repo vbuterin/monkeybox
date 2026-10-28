@@ -112,6 +112,16 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         assert send.call_args.args[0] == ['@@WTYPE@@', '-m', 'shift', '-m', 'ctrl', '-k', 'XF86Copy']
         b.application_key(host, 'v')
         assert send.call_args.args[0][-1] == 'XF86Paste'
+    # Other native host apps get the app's own chord with Ctrl held at the
+    # keypress (an earlier chord released ctrl first, so they saw a bare
+    # Shift+C and no copy ever arrived). Bindings match per keyboard device,
+    # so this never recurses into the global Ctrl+Shift+C/V release binding.
+    with patch.object(b, 'focused', return_value=host), patch.object(b, 'bounded') as send, \
+            patch.object(os, 'readlink', return_value='/nix/store/fixture-evince/bin/evince'):
+        b.application_key(host, 'c')
+        assert send.call_args.args[0] == ['@@WTYPE@@', '-m', 'ctrl', '-k', 'c', '-M', 'ctrl']
+        b.application_key(host, 'v')
+        assert send.call_args.args[0] == ['@@WTYPE@@', '-m', 'ctrl', '-k', 'v', '-M', 'ctrl']
     guest_target = (1, os.getpid(), {'sandbox': 'fixture'})
     with patch.object(b, 'focused', return_value=guest_target), patch.object(b, 'bounded') as send, \
             patch.object(b, 'endpoint') as guest_endpoint:

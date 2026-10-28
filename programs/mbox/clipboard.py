@@ -147,10 +147,16 @@ def application_key(target, key):
     if target[2] is None and exe.name == 'foot' and str(exe).startswith('/nix/store/'):
         # Alt+Enter launches native host Foot. Its dedicated clipboard actions
         # neither interrupt the shell nor recurse into global Ctrl+Shift+C/V.
-        keys = ['-k', 'XF86Copy' if key == 'c' else 'XF86Paste']
+        keys = ['-m', 'shift', '-m', 'ctrl', '-k', 'XF86Copy' if key == 'c' else 'XF86Paste']
     else:
-        keys = ['-M', 'ctrl', '-k', key, '-m', 'ctrl']
-    bounded(['@@WTYPE@@', '-m', 'shift', '-m', 'ctrl', *keys])
+        # Native apps need Ctrl held at the keypress. An earlier chord released
+        # ctrl first, so evince and friends saw a bare Shift+C and no copy ever
+        # arrived. Bindings match per keyboard device (sway matches with the
+        # event keyboard's own modifiers), so plain Ctrl+C/V on wtype's virtual
+        # keyboard cannot re-trigger the global Ctrl+Shift+C/V release binding
+        # even while the user still holds it physically.
+        keys = ['-m', 'ctrl', '-k', key, '-M', 'ctrl']
+    bounded(['@@WTYPE@@', *keys])
     if focused() != target:
         raise ClipboardFailure(FOCUS)
 
