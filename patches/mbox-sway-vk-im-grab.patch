@@ -1,0 +1,17 @@
+--- a/sway/input/keyboard.c
++++ b/sway/input/keyboard.c
+@@ -422,6 +422,14 @@
+ 		sway_seat->im_relay.input_method;
+ 	struct wlr_virtual_keyboard_v1 *virtual_keyboard =
+ 		wlr_input_device_get_virtual_keyboard(keyboard->seat_device->input_device->wlr_device);
++	// mbox: compositor-driven virtual keyboards (wtype helper chords) must
++	// bypass input-method grabs. On the grab path the seat keyboard is never
++	// switched, so the client composes the forwarded key with the physical
++	// keyboard's stale modifier state (Ctrl+Shift+c instead of Ctrl+c) and
++	// the IME sees automation it should never intercept.
++	if (virtual_keyboard) {
++		return NULL;
++	}
+ 	if (!input_method || !input_method->keyboard_grab || (virtual_keyboard &&
+ 				wl_resource_get_client(virtual_keyboard->resource) ==
+ 				wl_resource_get_client(input_method->keyboard_grab->resource))) {

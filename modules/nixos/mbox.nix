@@ -376,11 +376,15 @@ let
     # wl_keyboard focus and typing dies.
     patches = let
       ps = old.patches or [];
-      haveRefocus = builtins.any
-        (p: lib.hasSuffix "mbox-sway-kb-refocus.patch" (toString p)) ps;
+      names = map (p: baseNameOf (toString p)) ps;
+      wanted = map (p: {
+        name = baseNameOf (toString p);
+        path = p;
+      }) [ ../../patches/mbox-sway-kb-refocus.patch ../../patches/mbox-sway-vk-im-grab.patch ];
+      missing = map (p: p.path) (builtins.filter (p: !builtins.elem p.name names) wanted);
     in
       ps
-      ++ lib.optionals (!haveRefocus) [ ../../patches/mbox-sway-kb-refocus.patch ]
+      ++ missing
       ++ [
         ../../patches/mbox-sway-caret.patch
         ../../patches/mbox-sway-focus-repair.patch

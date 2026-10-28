@@ -151,10 +151,11 @@ def application_key(target, key):
     else:
         # Native apps need Ctrl held at the keypress. An earlier chord released
         # ctrl first, so evince and friends saw a bare Shift+C and no copy ever
-        # arrived. Bindings match per keyboard device (sway matches with the
-        # event keyboard's own modifiers), so plain Ctrl+C/V on wtype's virtual
-        # keyboard cannot re-trigger the global Ctrl+Shift+C/V release binding
-        # even while the user still holds it physically.
+        # arrived. The global Ctrl+Shift+C/V release binding matches on the
+        # event keyboard's own modifiers, so plain Ctrl+C/V on wtype's virtual
+        # keyboard cannot re-trigger it even while the user still holds it
+        # physically; the seat-side delivery of the chord is the sway
+        # vk-im-grab patch's job.
         keys = ['-m', 'ctrl', '-k', key, '-M', 'ctrl']
     bounded(['@@WTYPE@@', *keys])
     if focused() != target:
@@ -252,6 +253,15 @@ def main():
         return
     if action == 'expire':
         time.sleep(TTL)
+    if action in ('copy', 'export', 'paste', 'import', 'clear'):
+        # Nested helpers (binding echoes, double triggers) must not interleave:
+        # a second clear would destroy the first helper's copied text mid-poll.
+        operation = (path / 'operation.lock').open('a')
+        try:
+            fcntl.flock(operation, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('mbox clipboard: another clipboard operation is already running')
+            return
     with (path / 'lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         buffer = path / 'buffer.json'
