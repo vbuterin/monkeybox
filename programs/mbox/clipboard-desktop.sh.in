@@ -9,7 +9,14 @@ esac
 export XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime
 mkdir -m 700 "$XDG_RUNTIME_DIR"
 config="$XDG_RUNTIME_DIR/sway.conf"
-printf '%s\n' 'output * mode 1280x800' 'seat seat0 fallback true' \
+# Guest windows carry no decorations, so a secondary application window —
+# Firefox's popup windows, a second editor, anything the sandbox application
+# opens beside its main window — appears inside the single mbox window with no
+# visible way to close it on its own. Ctrl+Alt+Q closes whatever guest window
+# has focus without touching the sandbox itself; the host session has no
+# binding on that chord, so it is consumed here.
+printf '%s\n' 'output * mode 1280x800' 'bindsym Ctrl+Alt+q kill' \
+    'seat seat0 fallback true' \
     'seat seat0 keyboard_grouping none' \
     'default_border none' 'focus_follows_mouse no' 'xwayland disable' > "$config"
 if [ -d /usr/share/mbox-fonts ]; then

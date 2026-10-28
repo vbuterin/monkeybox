@@ -47,4 +47,10 @@ assert 'wl_event_source_remove(relay->mbox_caret_timer)' in patch
 assert 'relay->input_method || getenv("MBOX_CARET_FILE")' in patch
 for name in ('MBOX_CARET_FILE', 'MBOX_XIM_CARET', 'MBOX_SATELLITE_PID_FILE'):
     assert script.index('export '+name+'=') < script.index('@@SWAY@@')
+# Guest windows are undecorated, so a secondary window opened by the sandbox
+# application (Firefox popup windows, second editor windows) otherwise has no
+# close affordance at all; the guest compositor keeps a chord that kills the
+# focused window. The chord must be part of the written config, not dead text.
+assert 'bindsym Ctrl+Alt+q kill' in script
+assert script.index('bindsym Ctrl+Alt+q kill') < script.index("> \"$config\"")
 print('PASS: guest-local XIM/GTK/caret startup, environment, dependency, cleanup and fail-closed routing wired')

@@ -11,6 +11,16 @@ The clipboard broker currently requires host Sway for trustworthy peer/focus
 selection. Other compositors may support ordinary `-v` applications but are not
 validated clipboard targets.
 
+With `-vc` the whole sandbox desktop renders inside the single mbox window —
+the nested compositor's one output. Secondary windows the application opens
+(Firefox popup windows, a second editor) tile inside it, undecorated, so they
+have no close button of their own. The nested Sway binds `Ctrl+Alt+Q` to kill
+the focused guest window: click the popup, press the chord, and the window
+closes without ending the sandbox. The host session binds nothing on that
+chord, so the keypress reaches the guest compositor unchanged. Running the
+application without `-c` (plain `-v`) instead maps every guest top-level as
+its own host window, where the host compositor closes it directly.
+
 `-a` enables playback; `-r` independently enables microphone input. Both are
 off by default; `--no-audio` and `--no-microphone` revoke only their respective
 direction. A private host Pulse daemon loads only the selected tunnels, disables
