@@ -1,4 +1,4 @@
-/* Fixed guest-local Copy/Paste requests, never a general input service. */
+/* Fixed Copy/Paste requests on the caller's compositor, never an input service. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,7 +34,10 @@ static void removed(void *data, struct wl_registry *registry, uint32_t id) {
 }
 static const struct wl_registry_listener listener = {global, removed};
 int main(int argc, char **argv) {
-    if (argc != 2 || (strcmp(argv[1], "copy") && strcmp(argv[1], "paste"))) return 2;
+    if (argc != 2) return 2;
+    int copy = !strcmp(argv[1], "copy") || !strcmp(argv[1], "copy-foot");
+    int foot = !strcmp(argv[1], "copy-foot") || !strcmp(argv[1], "paste-foot");
+    if (!copy && strcmp(argv[1], "paste") && !foot) return 2;
     struct wl_display *display = wl_display_connect(NULL);
     if (!display) return 1;
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -57,8 +60,10 @@ int main(int argc, char **argv) {
     if (ctrl == XKB_MOD_INVALID || ctrl >= 32) return 1;
     /* Standard evdev codes with a complete, stable keymap (not wtype's tiny
        per-command map, which reuses keycode 1 for unrelated keys). */
-    uint32_t code = !strcmp(argv[1], "copy") ? 46 : 47;
-    zwp_virtual_keyboard_v1_modifiers(keyboard, 1u << ctrl, 0, 0, 0);
+    /* evdev KEY_COPY/KEY_PASTE map to XF86Copy/XF86Paste in the full map.
+       Foot binds those semantic keys without modifiers; never send SIGINT. */
+    uint32_t code = foot ? (copy ? 133 : 135) : (copy ? 46 : 47);
+    zwp_virtual_keyboard_v1_modifiers(keyboard, foot ? 0 : 1u << ctrl, 0, 0, 0);
     zwp_virtual_keyboard_v1_key(keyboard, 0, code, WL_KEYBOARD_KEY_STATE_PRESSED);
     zwp_virtual_keyboard_v1_key(keyboard, 0, code, WL_KEYBOARD_KEY_STATE_RELEASED);
     zwp_virtual_keyboard_v1_modifiers(keyboard, 0, 0, 0, 0);

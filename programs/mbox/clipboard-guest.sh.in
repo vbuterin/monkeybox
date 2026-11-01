@@ -7,7 +7,7 @@ case "$1" in
     key-copy) exec @@KEY@@ copy ;;
     key-paste) exec @@KEY@@ paste ;;
     clear) exec @@WL_COPY@@ --clear >/dev/null 2>&1 ;;
-    export) exec @@WL_PASTE@@ --no-newline --type 'text/plain;charset=utf-8' ;;
+    export) exec @@WL_PASTE@@ --no-newline --type text ;;
     import) exec @@WL_COPY@@ --type 'text/plain;charset=utf-8' >/dev/null 2>&1 ;;
     *) exit 2 ;;
 esac

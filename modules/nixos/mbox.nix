@@ -304,7 +304,7 @@ let
       mkdir -m 700 runtime
       export XDG_RUNTIME_DIR="$PWD/runtime" WAYLAND_DISPLAY=missing-display
       unset WAYLAND_SOCKET
-      for action in copy paste; do
+      for action in copy paste copy-foot paste-foot; do
         status=0
         ./mbox-clipboard-key "$action" || status=$?
         test "$status" = 1
@@ -316,7 +316,7 @@ let
     '';
     installPhase = ''mkdir -p $out/bin; cp mbox-clipboard-key $out/bin/'';
     meta = {
-      description = "Fixed Copy/Paste key requests for the guest-local mbox compositor";
+      description = "Fixed Copy/Paste key requests for host and guest compositors";
       platforms = lib.platforms.linux;
       mainProgram = "mbox-clipboard-key";
     };
@@ -368,12 +368,8 @@ let
     '';
   });
   nestedSway = (pkgs.sway-unwrapped.override { wlroots_0_20 = nestedWlroots; }).overrideAttrs (old: {
-    # Note: the parent config's sway overlay already injects
-    # mbox-sway-kb-refocus.patch into the base sway-unwrapped (monkeybox
-    # follows the host nixpkgs), so only append it when absent to avoid a
-    # double application. Guest copies type with wtype chords (Ctrl+C/Ctrl+V
-    # relays); without the patch the virtual keyboard join/exit desyncs
-    # wl_keyboard focus and typing dies.
+    # The host overlay may already carry the shared keyboard lifecycle fixes.
+    # Apply them once; no polling or forced leave/enter on keymap changes.
     patches = let
       ps = old.patches or [];
       names = map (p: baseNameOf (toString p)) ps;
@@ -446,9 +442,9 @@ let
     (builtins.readFile ../../programs/mbox/clipboard-desktop.sh.in));
 
   clipboardSource = pkgs.writeText "mbox-clipboard.py" (builtins.replaceStrings
-    [ "@@SWAYMSG@@" "@@WL_PASTE@@" "@@WL_COPY@@" "@@GUEST@@" "@@PYTHON@@" "@@WTYPE@@" ]
+    [ "@@SWAYMSG@@" "@@WL_PASTE@@" "@@WL_COPY@@" "@@GUEST@@" "@@PYTHON@@" "@@KEY@@" ]
     [ "${pkgs.sway-unwrapped}/bin/swaymsg" "${pkgs.wl-clipboard}/bin/wl-paste"
-      "${pkgs.wl-clipboard}/bin/wl-copy" "${clipboardGuest}" "${pkgs.python3}/bin/python3" "${pkgs.wtype}/bin/wtype" ]
+      "${pkgs.wl-clipboard}/bin/wl-copy" "${clipboardGuest}" "${pkgs.python3}/bin/python3" "${clipboardKey}/bin/mbox-clipboard-key" ]
     (builtins.readFile ../../programs/mbox/clipboard.py));
   clipboard = pkgs.writeShellScriptBin "mbox-clipboard" ''
     case "''${1:-}" in

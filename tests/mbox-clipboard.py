@@ -109,19 +109,21 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
     with patch.object(b, 'focused', return_value=host), patch.object(b, 'bounded') as send, \
             patch.object(os, 'readlink', return_value='/nix/store/fixture-foot/bin/foot'):
         b.application_key(host, 'c')
-        assert send.call_args.args[0] == ['@@WTYPE@@', '-m', 'shift', '-m', 'ctrl', '-k', 'XF86Copy']
+        assert send.call_args.args[0] == ['@@KEY@@', 'copy-foot']
         b.application_key(host, 'v')
-        assert send.call_args.args[0][-1] == 'XF86Paste'
-    # Other native host apps get the app's own chord with Ctrl held at the
-    # keypress (an earlier chord released ctrl first, so they saw a bare
-    # Shift+C and no copy ever arrived). Bindings match per keyboard device,
-    # so this never recurses into the global Ctrl+Shift+C/V release binding.
+        assert send.call_args.args[0] == ['@@KEY@@', 'paste-foot']
+    # Host GTK uses the same complete-keymap helper as guests. Do not regress
+    # to wtype's tiny keymap (or its easily reversed modifier CLI flags).
     with patch.object(b, 'focused', return_value=host), patch.object(b, 'bounded') as send, \
             patch.object(os, 'readlink', return_value='/nix/store/fixture-evince/bin/evince'):
         b.application_key(host, 'c')
-        assert send.call_args.args[0] == ['@@WTYPE@@', '-m', 'ctrl', '-k', 'c', '-M', 'ctrl']
+        assert send.call_args.args[0] == ['@@KEY@@', 'copy']
         b.application_key(host, 'v')
-        assert send.call_args.args[0] == ['@@WTYPE@@', '-m', 'ctrl', '-k', 'v', '-M', 'ctrl']
+        assert send.call_args.args[0] == ['@@KEY@@', 'paste']
+    # Text MIME negotiation accepts aliases, never arbitrary binary formats.
+    with patch.object(b, 'bounded', return_value=b'plain text') as read:
+        assert b.endpoint(host, 'export') == b'plain text'
+        assert read.call_args.args[0] == ['@@WL_PASTE@@', '--no-newline', '--type', 'text']
     guest_target = (1, os.getpid(), {'sandbox': 'fixture'})
     with patch.object(b, 'focused', return_value=guest_target), patch.object(b, 'bounded') as send, \
             patch.object(b, 'endpoint') as guest_endpoint:

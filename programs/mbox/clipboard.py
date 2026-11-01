@@ -119,7 +119,9 @@ def focused():
 def endpoint(target, action, data=None):
     session = target[2]
     if session is None:
-        argv = (['@@WL_PASTE@@', '--no-newline', '--type', 'text/plain;charset=utf-8']
+        # Let wl-paste negotiate a text MIME alias (GTK/X11 need not offer
+        # exactly text/plain;charset=utf-8). text() still validates the bytes.
+        argv = (['@@WL_PASTE@@', '--no-newline', '--type', 'text']
                 if action == 'export' else ['@@WL_COPY@@', '--clear']
                 if action == 'clear' else ['@@WL_COPY@@', '--type', 'text/plain;charset=utf-8'])
         return bounded(argv, data=data, discard=action != 'export')
@@ -142,22 +144,14 @@ def application_key(target, key):
         if focused() != target:
             raise ClipboardFailure(FOCUS)
         return
-    # Host-only virtual keyboard for native host apps. Bindings run on release.
+    # Use the same complete-keymap, fixed-action helper on both desktops.
+    # wtype's per-command keymap is unsuitable for GTK editing shortcuts.
     exe = Path(os.readlink(f'/proc/{target[1]}/exe'))
-    if target[2] is None and exe.name == 'foot' and str(exe).startswith('/nix/store/'):
-        # Alt+Enter launches native host Foot. Its dedicated clipboard actions
-        # neither interrupt the shell nor recurse into global Ctrl+Shift+C/V.
-        keys = ['-m', 'shift', '-m', 'ctrl', '-k', 'XF86Copy' if key == 'c' else 'XF86Paste']
-    else:
-        # Native apps need Ctrl held at the keypress. An earlier chord released
-        # ctrl first, so evince and friends saw a bare Shift+C and no copy ever
-        # arrived. The global Ctrl+Shift+C/V release binding matches on the
-        # event keyboard's own modifiers, so plain Ctrl+C/V on wtype's virtual
-        # keyboard cannot re-trigger it even while the user still holds it
-        # physically; the seat-side delivery of the chord is the sway
-        # vk-im-grab patch's job.
-        keys = ['-m', 'ctrl', '-k', key, '-M', 'ctrl']
-    bounded(['@@WTYPE@@', *keys])
+    action = 'copy' if key == 'c' else 'paste'
+    if exe.name == 'foot' and str(exe).startswith('/nix/store/'):
+        # Semantic keys avoid shell Ctrl+C and global Ctrl+Shift+C/V bindings.
+        action += '-foot'
+    bounded(['@@KEY@@', action])
     if focused() != target:
         raise ClipboardFailure(FOCUS)
 
@@ -225,7 +219,7 @@ def main():
         result = dict(host='', transfer='', hostStatus='No supported host text',
                       transferStatus='Empty or expired')
         try:
-            result['host'] = text(bounded(['@@WL_PASTE@@', '--no-newline', '--type', 'text/plain;charset=utf-8'])).decode('utf-8')
+            result['host'] = text(bounded(['@@WL_PASTE@@', '--no-newline', '--type', 'text'])).decode('utf-8')
             result['hostStatus'] = 'Host clipboard (snapshot)'
         except (RuntimeError, OSError):
             pass

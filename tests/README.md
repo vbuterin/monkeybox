@@ -1,5 +1,18 @@
 # Tests
 
+## Host clipboard and focus regressions
+
+- `python3 tests/mbox-sway-focus.py` compiles the actual patch additions against
+  a small seat/device fixture: removal restores a surviving keyboard (including
+  grouped keyboards), healthy focus never cycles, and popups/layers/grabs/input
+  denial stay untouched. This is a policy test, not a full Sway build.
+- `python3 tests/mbox-host-clipboard.py SWAY WTYPE KEY WL_CLIPBOARD_BIN LIBGTK3`
+  runs the production broker against real GTK in a private headless compositor.
+  `KEY` is the compiled `programs/mbox/clipboard-key.c` helper. It checks Copy,
+  actual Paste insertion, MIME alias negotiation and the old reversed-wtype
+  chord as a negative control. It never touches live desktop sockets or profiles.
+
+
 ## Focus caret and playback-device switching
 
 `mbox-audio.py --runtime PULSEAUDIO PACTL` uses private servers/null devices.

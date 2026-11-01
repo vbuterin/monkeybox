@@ -22,7 +22,8 @@ This is an experimental implementation, not an independent security audit.
 - `-a` includes microphone/monitoring access. `-l` grants an invocation-long
   camera stream starting before browser website permission. Closing a tab is
   not revocation; exit the VM. All guest applications share the grant.
-- Clipboard transfers are intentional, bounded, text-only and consume once.
+- Clipboard transfers are intentional, bounded and text-only. The transfer
+  buffer persists for repeated explicit pastes for 300 seconds, or until cleared.
   Focus checks are not atomic; an imported/previewed payload cannot be recalled.
 - Guest-local exit-status files report process behavior, not attestations from a
   trusted guest. Forced shutdown can lose unflushed writes.

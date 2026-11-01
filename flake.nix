@@ -39,7 +39,7 @@
       desktop = { type = "app"; program = "${desktop.package}/bin/mbox"; };
     };
     checks.${system}.policy = pkgs.runCommand "monkeybox-policy-tests" {
-      nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils pkgs.gnumake ];
+      nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils pkgs.gnumake pkgs.stdenv.cc ];
     } ''
       cp -r ${pkgs.lib.fileset.toSource {
         root = ./.;
@@ -66,6 +66,7 @@
       # Nix build sandboxes may not provide that. Run them explicitly on host.
       python3 tests/mbox-clipboard.py
       python3 tests/mbox-clipboard-preview.py
+      python3 tests/mbox-sway-focus.py
       touch $out
     '';
     devShells.${system}.default = pkgs.mkShell {

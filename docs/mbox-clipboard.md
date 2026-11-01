@@ -11,7 +11,8 @@ One desktop invocation per project/VM; stop an existing session before relaunch.
 - Focus the destination, `mbox-clipboard import`, then paste locally.
 - `mbox-clipboard clear` discards the transfer buffer, **not Cut**.
 
-Text only: UTF-8, no NUL, maximum 1 MiB, 60-second expiry, consume once. No
+Text only: UTF-8, no NUL, maximum 1 MiB, 300-second expiry. Paste preserves the
+transfer buffer for repeated explicit imports until expiry or clear. No
 passive synchronization, primary selection, images, files, HTML, DnD or history.
 Imports cannot be retracted from applications by clearing the transfer buffer.
 
@@ -39,12 +40,14 @@ clipboard-paste=Control+Shift+v XF86Paste
 The broker uses Foot semantic Copy/Paste keys so it does not send shell Ctrl+C.
 Footclient/server, other terminals and guest terminals are not supported combined
 editing targets; use manual local editing plus raw export/import instead.
-Other supported apps receive fixed Copy/Paste actions, and guests use a local
-full-keymap helper rather than an unrestricted host virtual keyboard endpoint.
+Other supported apps receive fixed Copy/Paste actions. Host and guest both use
+the same full-keymap helper; host actions run locally and guest actions run via
+the registered VM. No host virtual-keyboard endpoint is exposed to guests.
+Text MIME aliases are negotiated, then the bytes are checked for valid UTF-8.
 
 Keep focus stable: checks are not an atomic compositor targeting operation.
 Copy clears source clipboard before requesting Copy; failure may leave it empty.
-Paste consumes the buffer even if an application ignores Paste. A success means
+Paste retains the transfer buffer even if an application ignores Paste. A success means
 Paste requested, not application acknowledgment. Successful host imports remain
 readable to host applications under the desktop's normal clipboard model.
 
@@ -54,7 +57,7 @@ readable to host applications under the desktop's normal clipboard model.
 paste/import are distinct; no clipboard payload is read by watching. `preview`
 reads host text plus the unconsumed transfer buffer explicitly; panels should
 call it only on a user click, render plain text and discard the snapshot promptly.
-A visible snapshot cannot be retracted by later transfer consumption or expiry.
+A visible snapshot cannot be retracted by later transfer clearing or expiry.
 
 Noctalia styling/patches are not packaged here. No automatic shortcut install,
 clipboard history, universal application-local edit observer, or Cut operation
