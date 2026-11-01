@@ -5,6 +5,16 @@ and clipboard. The host broker chooses registered instances using host Sway peer
 PID, process ancestry and process start time—not guest-controlled window titles.
 One desktop invocation per project/VM; stop an existing session before relaunch.
 
+## Window lifetime
+
+Closing the outer nested-desktop window ends that invocation: remaining guest
+views are asked to close, then background app processes are terminated with a
+bounded grace period. Closing a guest app window (including `Ctrl+Alt+Q`) is
+not the same operation. A running command may legitimately have no windows,
+for example an audio player or an app that hides instead of quitting.
+No-window startup and transitions from video to audio do not end the session.
+Terminal-only invocations do not use this desktop lifecycle handler.
+
 ## Manual transfers
 
 - Copy locally, then `mbox-clipboard export` while the source remains focused.

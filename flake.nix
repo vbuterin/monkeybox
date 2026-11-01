@@ -58,6 +58,7 @@
       python3 tests/mbox-swap-package.py
       python3 tests/mbox-audio.py
       python3 tests/mbox-desktop-im.py
+      python3 tests/mbox-desktop-session-policy.py
       python3 tests/mbox-xim-policy.py
       python3 tests/mbox-file-mounts.py
       python3 tests/mbox-home-project.py

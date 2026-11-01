@@ -35,7 +35,19 @@ unset SWAYSOCK DISPLAY XAUTHORITY
 compositor=$!
 satellite=''
 xim=''
+session=''
 cleanup() {
+    if [ -n "$session" ]; then
+        kill -TERM "$session" 2>/dev/null || true
+        # The supervisor bounds IPC and app shutdown. Keep its compositor alive
+        # until it has had a chance to close views and reap the application.
+        for ((i=0; i<100; i++)); do
+            kill -0 "$session" 2>/dev/null || break
+            sleep .1
+        done
+        kill -KILL "$session" 2>/dev/null || true
+        wait "$session" 2>/dev/null || true
+    fi
     [ -z "$xim" ] || kill "$xim" 2>/dev/null || true
     [ -z "$satellite" ] || kill "$satellite" 2>/dev/null || true
     kill "$compositor" 2>/dev/null || true
@@ -92,4 +104,15 @@ export XMODIFIERS=@im=mbox
 # Select the IM backend after GTK opens its display: Wayland must advertise
 # cursor rectangles, while X11 uses only our guest-local XIM server.
 export GTK_IM_MODULE_FILE=@@IM_CACHE@@ GTK_IM_MODULE=mbox
-"$@"
+# The host close button destroys the nested output, not necessarily Sway or
+# the app. Observe that explicit close, NOT the absence of app windows: an
+# audio player or terminal command may legitimately remain windowless.
+# Bind lifecycle observation to this compositor's private IPC socket only.
+ipc="$XDG_RUNTIME_DIR/sway-ipc.$(id -u).$compositor.sock"
+[ -S "$ipc" ] || { echo 'mbox: guest desktop IPC unavailable' >&2; exit 1; }
+@@SESSION@@ "$ipc" "$@" <&0 &
+session=$!
+status=0
+wait "$session" || status=$?
+session=''
+exit "$status"

@@ -436,9 +436,13 @@ let
       $ximFlags -o $out/bin/mbox-xim
   '';
 
+  desktopSession = pkgs.writeShellScript "mbox-desktop-session" ''
+    exec ${pkgs.python3}/bin/python3 -I ${../../programs/mbox/desktop-session.py} "$@"
+  '';
+
   clipboardDesktop = pkgs.writeShellScript "mbox-clipboard-desktop" (builtins.replaceStrings
-    [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" "@@XIM@@" "@@IM_CACHE@@" ]
-    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" "${guestXim}/bin/mbox-xim" "${guestImAuto}/immodules.cache" ]
+    [ "@@SWAY@@" "@@SATELLITE@@" "@@FONTCONFIG@@" "@@FONTCONFIG_FALLBACK@@" "@@XIM@@" "@@IM_CACHE@@" "@@SESSION@@" ]
+    [ "${nestedSway}/bin/sway" "${pkgs.xwayland-satellite}/bin/xwayland-satellite" "${guestFontsConf}" "${guestFontsBase}" "${guestXim}/bin/mbox-xim" "${guestImAuto}/immodules.cache" "${desktopSession}" ]
     (builtins.readFile ../../programs/mbox/clipboard-desktop.sh.in));
 
   clipboardSource = pkgs.writeText "mbox-clipboard.py" (builtins.replaceStrings

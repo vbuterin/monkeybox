@@ -1,5 +1,29 @@
 # Tests
 
+## Nested desktop lifetime regressions
+
+- `python3 tests/mbox-desktop-session-policy.py` runs the real supervisor and
+  disposable processes against private fake Sway IPC. Covers exit codes,
+  signals, stdin, same-group background children, disabled vs destroyed output,
+  pre-launch close, malformed/disconnected/stalled IPC, and an app ignoring TERM.
+  Included in the flake policy gate.
+- `python3 tests/mbox-desktop-session.py SWAY FOOT` runs two private real
+  compositors. Covers windowless startup, last/secondary guest-window close,
+  explicit outer-window close, output disable/enable, compositor failure, exit
+  status, and an unrelated host-side fixture window surviving every case.
+- `python3 tests/mbox-desktop-session-wrapper.py SWAY SATELLITE XIM IM_CACHE FONTCONFIG`
+  renders the actual guest shell template with installed bridge binaries and
+  runs it under bwrap with private `/tmp` and network namespace. Checks normal
+  command exit, outer-window close, and wrapper cancellation; verifies app,
+  supervisor, Sway, satellite and XIM descendants no longer run. On a harness
+  supplying ambient capabilities, run under `capsh --caps= -- -c '…'` so bwrap
+  can create its normal unprivileged namespace.
+
+All fixtures use disposable HOME/runtime and synthetic commands, not live apps,
+input or profiles. These are component/integration tests, not proof of packaged
+VM teardown or management unregistration. Detached process groups are ultimately
+owned by the VM lifecycle, not by the supervisor's app process-group cleanup.
+
 ## Host clipboard and focus regressions
 
 - `python3 tests/mbox-sway-focus.py` compiles the actual patch additions against
