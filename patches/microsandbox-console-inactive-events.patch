@@ -1,0 +1,108 @@
+--- a/src/virtio/console/event_handler.rs
++++ b/src/virtio/console/event_handler.rs
+@@ -107,14 +107,17 @@
+     fn process(&mut self, event: &EpollEvent, event_manager: &mut EventManager) {
+         let source = event.fd();
+ 
+-        let control_rxq = eventfd_pollable(&self.queue_events[CONTROL_RXQ_INDEX]);
+-        let control_txq = eventfd_pollable(&self.queue_events[CONTROL_TXQ_INDEX]);
+-        let control_rxq_control = eventfd_pollable(self.control.queue_evt());
++        if self.is_activated() {
++            // Queue events exist only after activation and are cleared by reset.
++            // SIGWINCH/control events can arrive before activation, so do not
++            // index the queue array until the device state has been checked.
++            let control_rxq = eventfd_pollable(&self.queue_events[CONTROL_RXQ_INDEX]);
++            let control_txq = eventfd_pollable(&self.queue_events[CONTROL_TXQ_INDEX]);
++            let control_rxq_control = eventfd_pollable(self.control.queue_evt());
+ 
+-        let activate_evt = eventfd_pollable(&self.activate_evt);
+-        let sigwinch_evt = eventfd_pollable(&self.sigwinch_evt);
++            let activate_evt = eventfd_pollable(&self.activate_evt);
++            let sigwinch_evt = eventfd_pollable(&self.sigwinch_evt);
+ 
+-        if self.is_activated() {
+             let mut raise_irq = false;
+ 
+             if source == control_txq {
+@@ -161,3 +164,81 @@
+         ]
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::sync::Arc;
++    use utils::eventfd::EventFd;
++    use vm_memory::{GuestAddress, GuestMemoryMmap};
++
++    use crate::legacy::DummyIrqChip;
++    use crate::virtio::console::port::PortDescription;
++    use crate::virtio::{DeviceQueue, InterruptTransport, Queue};
++
++    fn console() -> Console {
++        Console::new(vec![PortDescription {
++            name: "test-console".into(),
++            input: None,
++            output: None,
++            terminal: None,
++            queue_size: 32,
++        }])
++        .unwrap()
++    }
++
++    fn process_inactive_events(console: &mut Console, manager: &mut EventManager) {
++        assert!(!console.is_activated());
++        assert!(console.queue_events.is_empty());
++        // All initially registered sources must be safe before queues exist,
++        // including resize/control notifications and a stale activation event.
++        for event in console.interest_list() {
++            console.process(&event, manager);
++        }
++        assert!(console.queue_events.is_empty());
++    }
++
++    #[test]
++    fn console_events_before_activation_do_not_index_queues() {
++        process_inactive_events(&mut console(), &mut EventManager::new().unwrap());
++    }
++
++    #[test]
++    fn console_events_after_reset_do_not_index_queues() {
++        let mut console = console();
++        let mut manager = EventManager::new().unwrap();
++        let mem = GuestMemoryMmap::from_ranges(&[(GuestAddress(0), 0x1_0000)]).unwrap();
++        let interrupt =
++            InterruptTransport::new(DummyIrqChip::new().into(), "test-console".into()).unwrap();
++        let queues = console
++            .queue_config()
++            .iter()
++            .map(|config| {
++                DeviceQueue::new(Queue::new(config.size), Arc::new(EventFd::new(0).unwrap()))
++            })
++            .collect();
++        console.activate(mem, interrupt, queues).unwrap();
++        assert!(console.is_activated());
++        assert!(!console.queue_events.is_empty());
++
++        // Exercise a real active notification as a positive control.
++        console.sigwinch_evt.write(1).unwrap();
++        console.process(
++            &EpollEvent::new(
++                EventSet::IN,
++                pollable_token(eventfd_pollable(&console.sigwinch_evt)),
++            ),
++            &mut manager,
++        );
++        assert!(console.sigwinch_evt.read().is_err());
++
++        // A queued event may still be delivered after reset cleared the queues.
++        let stale_queue_event = EpollEvent::new(
++            EventSet::IN,
++            pollable_token(eventfd_pollable(&console.queue_events[CONTROL_RXQ_INDEX])),
++        );
++        assert!(console.reset());
++        console.process(&stale_queue_event, &mut manager);
++        process_inactive_events(&mut console, &mut manager);
++    }
++}

@@ -103,7 +103,11 @@ release. The snapshot excludes documentation and local evidence.
 Additional restored tests:
 
 - `mbox-network.py`: full Nix evaluation plus shell assembly.
-- `mbox-source-package.py`: immutable backport/package guardrails.
+- `mbox-source-package.py`: immutable backport/package guardrails, including the
+  inactive-console event fix and its Cargo test wiring. The package's check phase
+  runs `virtio::console::` as well as the focused vsock regressions. See
+  [console startup regression](../docs/mbox-console-startup.md) for the reproduced
+  panic, test scope, and deployment requirements.
 - `mbox-vsock-runtime.py FIXTURE`: bulk integrity up to 16 MiB.
 - `mbox-xwayland-presentation.py FIXTURE SWAY GRIM`: private host pixel checks.
 - `mbox-fontconfig.py FIXTURE`: bwrap custom-image fallback contract.

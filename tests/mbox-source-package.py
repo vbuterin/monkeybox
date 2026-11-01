@@ -27,4 +27,11 @@ assert 'cfg!(windows) || run.status == run_entity::RunStatus::Running' in pid_pa
 assert 'test_prepare_create_target_terminated_reused_pid' in pid_patch
 assert 'UnixListener::bind(&paths.control)' in pid_patch
 assert 'runtime endpoint is still live' in pid_patch
-print('PASS: pinned PR backport, source agent, offline Cargo, original firmware, no impure candidate; terminated-PID fix and regression wired')
+console_patch = (root/'patches/microsandbox-console-inactive-events.patch').read_text()
+assert '../../patches/microsandbox-console-inactive-events.patch' in pkg
+assert "changed.append('src/virtio/console/event_handler.rs')" in pkg
+assert '-p msb_krun_devices --lib virtio::console::' in pkg
+assert 'console_events_before_activation_do_not_index_queues' in console_patch
+assert 'console_events_after_reset_do_not_index_queues' in console_patch
+assert 'console.sigwinch_evt.read().is_err()' in console_patch
+print('PASS: pinned PR backport, source agent, offline Cargo, original firmware, no impure candidate; terminated-PID and inactive-console fixes and regressions wired')

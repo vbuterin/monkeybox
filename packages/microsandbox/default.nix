@@ -1,4 +1,4 @@
-# Microsandbox 0.7.3 with the scoped libkrun PR #171 backport.
+# Microsandbox 0.7.3 with the scoped libkrun PR #171 backport and console fix.
 # Both CLI and embedded agent are built offline from source. Firmware remains
 # selected by modules/nixos/mbox.nix from the original release bundle.
 # Deliberate pairing: release firmware/initramfs + source-built injected agent;
@@ -39,6 +39,8 @@ rustPlatform.buildRustPackage {
     device="$cargoDepsCopy/source-registry-0/msb_krun_devices-0.1.39"
     test -f "$device/src/virtio/vsock/packet.rs"
     patch --batch --fuzz=0 -d "$device" -p3 < "$vsockPatch"
+    # Early console events must not index queues before activation (or after reset).
+    patch --batch --fuzz=0 -d "$device" -p1 < ${../../patches/microsandbox-console-inactive-events.patch}
     # Cargo validates vendored file checksums. Update only the patched files;
     # the fixed-output original vendor tree and fetched patch remain verified.
     python3 - "$device" <<'PY'
@@ -46,8 +48,10 @@ rustPlatform.buildRustPackage {
     root = pathlib.Path(sys.argv[1])
     path = root / '.cargo-checksum.json'
     data = json.loads(path.read_text())
-    for name in ('packet.rs', 'packet_tests.rs', 'custom_stream.rs'):
-        rel = 'src/virtio/vsock/' + name
+    changed = ['src/virtio/vsock/' + name for name in
+               ('packet.rs', 'packet_tests.rs', 'custom_stream.rs')]
+    changed.append('src/virtio/console/event_handler.rs')
+    for rel in changed:
         data['files'][rel] = hashlib.sha256((root / rel).read_bytes()).hexdigest()
     path.write_text(json.dumps(data))
     PY
@@ -76,6 +80,7 @@ rustPlatform.buildRustPackage {
   # when that lifecycle hang is diagnosed; compilation cost is not the reason.
   checkPhase = ''
     runHook preCheck
+    cargo test --frozen --profile ci -p msb_krun_devices --lib virtio::console::
     cargo test --frozen --profile ci -p msb_krun_devices --lib virtio::vsock::packet::tests
     cargo test --frozen --profile ci -p msb_krun_devices --lib virtio::vsock::custom_stream::tests
     cargo test --frozen --profile ci --no-default-features --features local,net \
@@ -89,7 +94,7 @@ rustPlatform.buildRustPackage {
     runHook postInstall
   '';
   meta = {
-    description = "Microsandbox with libkrun PR 171 TX-chain and credit fixes";
+    description = "Microsandbox with libkrun console startup and PR 171 TX-chain/credit fixes";
     homepage = "https://github.com/superradcompany/libkrun/pull/171";
     platforms = [ "x86_64-linux" ];
     mainProgram = "msb";
