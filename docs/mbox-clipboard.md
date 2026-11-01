@@ -5,6 +5,21 @@ and clipboard. The host broker chooses registered instances using host Sway peer
 PID, process ancestry and process start time—not guest-controlled window titles.
 One desktop invocation per project/VM; stop an existing session before relaunch.
 
+## Window layout
+
+The nested desktop defaults to side-by-side tiling. Select explicitly with:
+
+```sh
+mbox -vc --desktop-layout side-by-side -- APPLICATION
+mbox -vc --desktop-layout tabbed -- APPLICATION
+```
+
+Tabbed mode gives tiled secondary windows the full available width, with a tab
+bar to switch between them. Windows recognized as dialogs still float normally.
+This affects only the guest desktop, not the host layout. The option requires
+`-vc`; terminal-only and direct visual invocations are unchanged. It does not
+change the application's minimum-size requirements.
+
 ## Window lifetime
 
 Closing the outer nested-desktop window ends that invocation: remaining guest

@@ -111,6 +111,7 @@ Options:
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
   -v, --visual             Software Wayland + guest-local Xwayland (filtered compositor access)
   -c, --clipboard          Opt-in nested desktop with explicit host text transfers (requires -v)
+      --desktop-layout MODE  Nested windows: side-by-side (default) or tabbed (requires -vc)
   -a, --audio              Audio output (no host microphone or host-output monitoring)
   -r, --microphone         Microphone input (independent of audio output)
       --no-visual           Disable Wayland/Xwayland bridge (default)
@@ -174,6 +175,8 @@ SWAP_ENABLED=0
 FRESH=0
 EPHEMERAL=0
 CLIPBOARD=0
+DESKTOP_LAYOUT=side-by-side
+DESKTOP_LAYOUT_SET=0
 CAMERA=0
 CAMERA_DEVICE=/dev/video0
 WAYLAND=0
@@ -211,7 +214,7 @@ while [ $# -gt 0 ]; do
         set -- "${cluster_args[@]}" "$@"
     fi
     case "$1" in
-        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache)
+        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache|--desktop-layout)
             if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = -* ]]; then
                 echo "mbox: $1 requires a value (see mbox --help)" >&2
                 exit 2
@@ -258,6 +261,12 @@ while [ $# -gt 0 ]; do
                 exit 2
             fi
             CLIPBOARD=1; shift ;;
+        --desktop-layout)
+            case "$2" in
+                side-by-side|tabbed) DESKTOP_LAYOUT="$2" ;;
+                *) echo 'mbox: --desktop-layout must be side-by-side or tabbed' >&2; exit 2 ;;
+            esac
+            DESKTOP_LAYOUT_SET=1; shift 2 ;;
         -v | --visual) WAYLAND=1; shift ;;
         -i | --internet) NET_MODE=open; shift ;;
         -a | --audio) AUDIO=1; shift ;;
@@ -298,6 +307,10 @@ if [ -n "${MBOX_SANDBOX:-}" ]; then
     exit 1
 fi
 
+if [ "$DESKTOP_LAYOUT_SET" = 1 ] && { [ "$CLIPBOARD" != 1 ] || [ "$WAYLAND" != 1 ]; }; then
+    echo 'mbox: --desktop-layout requires the nested desktop (-vc)' >&2
+    exit 2
+fi
 if [ "$CLIPBOARD" = 1 ]; then
     [ "$WAYLAND" = 1 ] || { echo 'mbox: --clipboard requires --visual' >&2; exit 2; }
     if [ "$RUN_AS_CALLER" != 1 ] || [ -n "$RUN_AS_SPEC" ]; then
@@ -905,7 +918,7 @@ if [ "$CAMERA" = 1 ]; then
 fi
 if [ "$WAYLAND" = 1 ] || [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
     if [ "$CLIPBOARD" = 1 ]; then
-        INNER=("@@CLIPBOARD_DESKTOP@@" "${INNER[@]}")
+        INNER=("@@CLIPBOARD_DESKTOP@@" "$DESKTOP_LAYOUT" "${INNER[@]}")
     fi
     AUDIO_BRIDGE=0
     if [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then AUDIO_BRIDGE=1; fi

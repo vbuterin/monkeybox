@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix='mbw-') as tmp:
                 # Private /tmp gives Xwayland its own X20 and runtime directory.
                 command = ['bwrap', '--die-with-parent', '--dev-bind', '/', '/',
                            '--tmpfs', '/tmp', '--bind', tmp, tmp, '--unshare-net',
-                           'bash', str(root / 'wrapper'), sys.executable, '-c', code]
+                           'bash', str(root / 'wrapper'), 'side-by-side', sys.executable, '-c', code]
                 child = launch(command, env)
                 wait_for(marker.exists)
                 pid = int(marker.read_text())

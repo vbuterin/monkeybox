@@ -1,6 +1,12 @@
 # A nested, software-only guest Sway owns a LOCAL clipboard. Only its output
 # reaches the filtered host proxy; no host clipboard protocol is added.
 set -euo pipefail
+case "$1" in
+    side-by-side) layout=default ;;
+    tabbed) layout=tabbed ;;
+    *) echo 'mbox: invalid nested desktop layout' >&2; exit 2 ;;
+esac
+shift
 outer_runtime=$XDG_RUNTIME_DIR
 case "$WAYLAND_DISPLAY" in
     /*) outer_display=$WAYLAND_DISPLAY ;;
@@ -18,6 +24,7 @@ config="$XDG_RUNTIME_DIR/sway.conf"
 printf '%s\n' 'output * mode 1280x800' 'bindsym Ctrl+Alt+q kill' \
     'seat seat0 fallback true' \
     'seat seat0 keyboard_grouping none' \
+    "workspace_layout $layout" \
     'default_border none' 'focus_follows_mouse no' 'xwayland disable' > "$config"
 if [ -d /usr/share/mbox-fonts ]; then
     export FONTCONFIG_FILE=@@FONTCONFIG@@

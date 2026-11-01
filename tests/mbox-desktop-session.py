@@ -16,6 +16,13 @@ spec = importlib.util.spec_from_file_location('session', source)
 session = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(session)
 
+def walk(node):
+    yield node
+    for key in ('nodes', 'floating_nodes'):
+        for child in node.get(key, []):
+            yield from walk(child)
+
+
 def has_window(node):
     return bool(node.get('shell') or node.get('window')) or any(
         has_window(child) for key in ('nodes', 'floating_nodes')
@@ -59,10 +66,18 @@ with tempfile.TemporaryDirectory(prefix='mbox-session-') as tmp:
             other_env = dict(env, WAYLAND_DISPLAY=str(sockets('outer', 'wayland-*')[0]))
             unrelated = launch([foot, '--config=/dev/null', 'sleep', '600'], other_env)
             wait_for(lambda: has_window(session.request(outer_ipc, 4)))
-            for mode in ('last-window', 'multiple-windows', 'outer-window', 'no-window', 'disabled', 'compositor-exit', 'app-exit'):
+            for mode in ('last-window', 'multiple-windows', 'tabbed', 'outer-window', 'no-window', 'disabled', 'compositor-exit', 'app-exit'):
                 guest = dict(env, XDG_RUNTIME_DIR=str(root / 'inner'), WLR_BACKENDS='wayland',
                              WAYLAND_DISPLAY=str(sockets('outer', 'wayland-*')[0]))
-                inner = launch([sway, '-c', str(root / 'config')], guest)
+                # Generate the actual production config, without launching its bridges.
+                template = (repo / 'programs/mbox/clipboard-desktop.sh.in').read_text()
+                layout_parser = template.split('set -euo pipefail\n', 1)[1].split('outer_runtime=', 1)[0]
+                config_writer = template.split("printf '%s\\n' 'output * mode 1280x800'", 1)[1].split('if [ -d /usr/share/mbox-fonts ]', 1)[0]
+                config_writer = "printf '%s\\n' 'output * mode 1280x800'" + config_writer
+                subprocess.run(['bash', '-eu', '-c', layout_parser + '\nconfig=$1\n' + config_writer,
+                                'fixture', 'tabbed' if mode == 'tabbed' else 'side-by-side',
+                                str(root / 'inner-config')], check=True)
+                inner = launch([sway, '-c', str(root / 'inner-config')], guest)
                 wait_for(lambda: sockets('inner', 'wayland-*') and sockets('inner', 'sway-ipc*'))
                 ipc = str(sockets('inner', 'sway-ipc*')[0])
                 guest['WAYLAND_DISPLAY'] = str(sockets('inner', 'wayland-*')[0])
@@ -98,10 +113,21 @@ with tempfile.TemporaryDirectory(prefix='mbox-session-') as tmp:
                     time.sleep(1)  # let lifecycle observer see the initial window
                     assert child.poll() is None
                     app_pid = int(pidfile.read_text())
-                    if mode == 'multiple-windows':
+                    if mode in ('multiple-windows', 'tabbed'):
                         second = launch([foot, '--config=/dev/null', 'sleep', '600'], guest)
                         time.sleep(1)
                         assert second.poll() is None
+                        tree = session.request(ipc, 4)
+                        views = [n for n in walk(tree) if n.get('shell')]
+                        assert len(views) == 2
+                        workspace = next(n for n in walk(tree) if n.get('type') == 'workspace' and n.get('name') != '__i3_scratch')
+                        if mode == 'tabbed':
+                            assert any(n.get('layout') == 'tabbed' for n in walk(workspace)), workspace
+                            assert views[0]['rect']['x'] == views[1]['rect']['x']
+                            assert views[0]['rect']['width'] == workspace['rect']['width']
+                        else:
+                            assert workspace['layout'] == 'splith', workspace
+                            assert views[0]['rect']['x'] != views[1]['rect']['x']
                         session.request(ipc, 0, f'[pid={second.pid}] kill'.encode())
                         second.wait(timeout=5)
                         assert has_window(session.request(ipc, 4))

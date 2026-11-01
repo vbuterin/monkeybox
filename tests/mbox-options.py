@@ -17,6 +17,24 @@ for args in (['--cpus'], ['--cpus', '-c']):
     assert result.returncode == 2 and b'requires a value' in result.stderr
 result = subprocess.check_output(['bash', '-eu', '-c', parser, 'test', '--', 'bash', '-c', 'true'])
 assert result.split(b'\0')[:-1] == [b'0', b'0', b'2', b'bash', b'-c', b'true']
+layout_parser = parser + '\nprintf "LAYOUT=%s" "$DESKTOP_LAYOUT"'
+for args, expected in [([], 'side-by-side'), (['-vc'], 'side-by-side'),
+                       (['-vc', '--desktop-layout', 'tabbed'], 'tabbed'),
+                       (['--desktop-layout', 'side-by-side', '-vc'], 'side-by-side'),
+                       (['--', 'echo', '--desktop-layout', 'tabbed'], 'side-by-side')]:
+    result = subprocess.check_output(['bash', '-eu', '-c', layout_parser, 'test', *args])
+    assert result.endswith(('LAYOUT=' + expected).encode())
+for args in (['--desktop-layout'], ['--desktop-layout', '--'],
+             ['--desktop-layout', ''], ['--desktop-layout', 'invalid']):
+    result = subprocess.run(['bash', '-eu', '-c', layout_parser, 'test', *args], capture_output=True)
+    assert result.returncode == 2
+validation = source.split('if [ "$DESKTOP_LAYOUT_SET" = 1 ]', 1)[1].split('if [ "$CLIPBOARD" = 1 ]', 1)[0]
+validated = layout_parser + '\nif [ "$DESKTOP_LAYOUT_SET" = 1 ]' + validation
+for flags in ([], ['-v'], ['-c'], ['-vc', '--no-visual']):
+    result = subprocess.run(['bash', '-eu', '-c', validated, 'test', *flags,
+                             '--desktop-layout', 'tabbed'], capture_output=True)
+    assert result.returncode == 2 and b'requires the nested desktop' in result.stderr
+assert 'INNER=("@@CLIPBOARD_DESKTOP@@" "$DESKTOP_LAYOUT" "${INNER[@]}")' in source
 # Swap is an explicit bounded per-launch override; do not accept shell numbers
 # with octal ambiguity, suffixes, overflow, negatives or missing arguments.
 swap_parser = 'SWAP_MIB=8192\n' + parser + '\nprintf "ENABLED=%s SWAP=%s" "$SWAP_ENABLED" "$SWAP_MIB"'
