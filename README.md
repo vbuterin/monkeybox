@@ -32,7 +32,8 @@ retained deliberately. Do not run the old and new wrappers concurrently against
 the same project/state; use `MBOX_STATE_ROOT` to test separately.
 
 The default package contains a small CLI userland. The **desktop preset** adds
-Firefox, Evince, feh and MPlayer, including a narrow Firefox font-directory mount:
+Firefox, Evince, feh and MPlayer. Visual mode discovers system and bundled fonts
+without browser-specific paths:
 
 ```sh
 nix run .#desktop -- -vic -- firefox
@@ -49,7 +50,9 @@ socket is shared. Hardware camera support is experimental; see [camera](docs/mbo
 
 ## Grants
 
-Default networking is blocked. The current project is shared read-write at its
+Without an application profile, networking is blocked. Shipped browser/agent
+profiles opt into internet; inspect `~/.mboxrc` or use `--no-config` for bare
+explicit-grant behavior. The current project is shared read-write at its
 canonical path; launching in your home instead uses the private guest home.
 Choose a small project directory rather than a directory full of sensitive files.
 
@@ -59,7 +62,9 @@ Choose a small project directory rather than a directory full of sensitive files
 | `-i` | Public internet egress |
 | `-p PORT` | Guest access to one host TCP service (sbox's `--allow-port`) |
 | `--expose-port PORT` | Host access to one guest TCP service, on the same loopback port |
-| `-v` | Software Wayland window/input bridge |
+| `-v` | Software Wayland bridge, host-font discovery/copy and bundled-font mounts |
+| `--read-only PATH` | Selected file/directory read-only; symlinks retain logical guest path |
+| `-b` | Existing host sh/bash/zsh/fish startup files read-only (not histories) |
 | `-a` | Audio output only (guest may monitor its own playback) |
 | `-r` | Microphone input, independent of `-a` |
 | `-c` | Guest-local desktop plus explicit Sway clipboard transfers; requires `-v` |
@@ -90,6 +95,52 @@ for itself, and the forward is withdrawn when the loopback listener stops, so a
 restart that binds the network address still gets the port. Both directions of a
 single port are independent: `-p 8080 --expose-port 8080` publishes a guest service
 and still lets the guest reach a host one.
+
+## Per-application defaults and shell startup files
+
+On the first normal launch, Monkeybox silently installs its commented TOML
+[template](programs/mbox/default.mboxrc) as `~/.mboxrc` (mode 0600). Creation is
+atomic and never replaces an existing file or symlink. Upgrades never overwrite
+user edits. `--no-config`, `--config FILE`, help and management commands do not
+create it. The file is data, never sourced as shell code.
+
+```toml
+version = 1
+[programs.my-browser]
+flags = ["-vaic", "-m", "4096"]
+project = "home" # private guest HOME, not a grant of host HOME
+read_write = ["~/Downloads"]
+read_only = ["~/reference"]
+```
+
+Profiles match the executable basename, not application arguments or commands
+inside `sh -c`. Missing optional resource paths are skipped. A supplied config
+replaces all defaults, rather than inheriting hidden grants. Profile flags precede
+CLI flags: `--no-internet`, `--no-visual`, `--no-clipboard`, `--no-shell-rc`, etc.
+can override scalar defaults. Mount/port grants are additive: use `--no-config`
+to discard a profile's grants. `--project PATH` or a positional directory overrides
+its project choice. Read-only grants do not downgrade a read-write project mount.
+
+Shipped profiles separate browser Downloads access from agent resources. No
+`world_knowledge`, credentials, host service ports, camera, microphone, swap or
+live Signal profile is automatically shared. The Pi profile shares selected
+model/skill/MCP configuration only; it does not grant server access. Other
+harnesses can be configured identically without launcher changes. Profiles do not
+install applications. Existing per-project home/state semantics are unchanged;
+use `MBOX_STATE_ROOT` or separate projects for separate persistent app homes.
+
+`-b` propagates existing `.profile`, `.shrc`, Bash startup files, zsh startup files
+(from `ZDOTDIR` when set), and fish `config.fish`, `conf.d`, `functions` and
+`completions` (from `XDG_CONFIG_HOME` when set). Zsh/fish files land at conventional
+paths in the private guest home. Histories, `fish_variables`, and whole host config
+directories are not shared. Symlinks resolve on the host while retaining guest
+startup-file destinations. RC code runs in the guest and can contain secrets:
+review it before granting access. External files/plugins it sources are not
+implicitly granted. POSIX shells do not agree on interactive RC behavior; `.shrc`
+may require explicit `-e ENV=...`. `-b` does not install/select a shell: e.g.
+`mbox -b -- zsh -i` requires zsh to be available. The default interactive shell
+remains Bash. The old `programs.mbox.bashrc` option is removed; use `-b` or an
+explicit `--read-only` grant instead.
 
 ## Configure without NixOS
 

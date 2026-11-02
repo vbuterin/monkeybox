@@ -1,0 +1,57 @@
+# Monkeybox application defaults (TOML), installed as ~/.mboxrc on first use.
+# Edit freely: upgrades never overwrite this file. --no-config bypasses it.
+# Flags precede explicit CLI options. Missing optional paths are skipped.
+# No credentials, live messaging profiles, camera, microphone or swap by default.
+version = 1
+
+[programs.firefox]
+flags = ["-vaic", "-m", "8192"]
+project = "home"
+read_write = ["~/Downloads", "~/Screenshots"]
+
+[programs.chromium]
+flags = ["-vaic", "-m", "4096"]
+project = "home"
+read_write = ["~/Downloads"]
+
+[programs.google-chrome]
+flags = ["-vaic", "-m", "4096"]
+project = "home"
+read_write = ["~/Downloads"]
+
+[programs.brave]
+flags = ["-vaic", "-m", "4096"]
+project = "home"
+read_write = ["~/Downloads"]
+
+[programs.signal-desktop]
+flags = ["-vaic", "--desktop-layout", "tabbed", "-m", "4096"]
+project = "home"
+read_write = ["~/Downloads"]
+
+[programs.transmission-gtk]
+flags = ["-vic", "-m", "4096"]
+project = "home"
+read_write = ["~/Downloads"]
+
+[programs.mplayer]
+flags = ["-vac", "--no-internet", "-m", "2048"]
+
+[programs.evince]
+flags = ["-vc", "--no-internet", "-m", "2048"]
+
+[programs.feh]
+flags = ["-vc", "--no-internet", "-m", "2048"]
+
+[programs.libreoffice]
+flags = ["-vc", "--no-internet", "-m", "4096"]
+
+[programs.gimp]
+flags = ["-vc", "--no-internet", "-m", "4096"]
+
+# These resources belong to the agent, never browsers/media viewers.
+# Server access is deliberately NOT inferred from an MCP/models configuration.
+# Grant host ports explicitly, or add them to your own profile's flags.
+[programs.pi]
+flags = ["-i"]
+read_only = ["~/.pi/agent/models.json", "~/.pi/agent/skills", "~/.pi/agent/prompts", "~/.pi/agent/themes", "~/.pi/agent/extensions", "~/.agents/skills", "~/.agents/mcp.json"]

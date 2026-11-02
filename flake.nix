@@ -8,11 +8,10 @@
     base = mk {};
     desktop = mk {
       packages = with pkgs; [ firefox evince feh mplayer ];
-      guestFontMounts = [ "${pkgs.firefox}/lib/firefox/fonts" ];
     };
     fixture = mk {
       packages = with pkgs; [ python3 pulseaudio wayland-utils mplayer feh xorg.xwininfo ];
-      persist = [ "$HOME/.npm-global" "$HOME/.pi" ];
+      persist = [ "$HOME/.npm-global" ];
       shellHook = ''
         # MBOX_DESKTOP_TEST_FIXTURE: validated by desktop runtime suite.
         export NPM_CONFIG_PREFIX="$HOME/.npm-global"
@@ -51,6 +50,7 @@
       python3 tests/mbox-test-tools.py
       python3 tests/mbox-network.py --assembly-only
       python3 tests/mbox-camera-host.py
+      python3 tests/mbox-resources.py
       python3 tests/mbox-options.py
       python3 tests/mbox-concurrent.py
       python3 tests/mbox-memory.py

@@ -30,7 +30,6 @@ GUEST_SHELL_STORE="@@GUEST_SHELL_STORE@@"
 RUN_AS_SPEC="@@RUN_AS@@"
 RUN_AS_CALLER="@@RUN_AS_CALLER@@"
 ROOT_DISK=(@@ROOT_DISK@@)
-BASHRC="@@BASHRC@@"
 BASHRC_SYSTEM="@@BASHRC_SYSTEM@@"
 SHARE_PROFILE="@@SHARE_PROFILE@@"
 EXCLUDE=(@@EXCLUDE@@)
@@ -109,7 +108,15 @@ Options:
                            As in sbox, -p is host access and --expose-port is
                            publishing; blocked mode still blocks egress.
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
-  -v, --visual             Software Wayland + guest-local Xwayland (filtered compositor access)
+  -v, --visual             Wayland/Xwayland bridge and automatic host/package font discovery
+  -b, --shell-rc           Share existing sh/bash/zsh/fish startup files read-only
+      --no-shell-rc        Do not propagate host startup files (default)
+      --read-only PATH    Share a file/directory read-only at its host path (repeatable)
+      --read-write PATH   Single-path equivalent of --file (useful in profiles)
+      --config FILE       Use this TOML application defaults file instead of ~/.mboxrc
+      --no-config         Bypass user and shipped application defaults
+      --project PATH      Explicit project directory (overrides a profile's home default)
+      --no-clipboard      Disable a profile's clipboard default
   -c, --clipboard          Opt-in nested desktop with explicit host text transfers (requires -v)
       --desktop-layout MODE  Nested windows: side-by-side (default) or tabbed (requires -vc)
   -a, --audio              Audio output (no host microphone or host-output monitoring)
@@ -170,7 +177,12 @@ case "${1:-}" in
         ;;
 esac
 
+ORIGINAL_ARGS=("$@")
 DRY_RUN=0
+USE_CONFIG=1
+CONFIG_FILE="${HOME}/.mboxrc"
+CONFIG_EXPLICIT=0
+SHELL_RC=0
 SWAP_ENABLED=0
 FRESH=0
 EPHEMERAL=0
@@ -184,8 +196,9 @@ AUDIO=0
 MICROPHONE=0
 HOST_LOOPBACK=0
 PROJECT_DIR=""
+PROJECT_POSITIONAL_SET=0
 declare -a ALLOW=(@@ALLOW_TCP@@) PUBLISH=(@@PUBLISH_TCP@@)
-declare -a EXTRA_PERSIST=() EXTRA_MOUNTS=() EXTRA_ENV=()
+declare -a EXTRA_PERSIST=() EXTRA_MOUNTS=() EXTRA_RO_MOUNTS=() EXTRA_ENV=()
 declare -a NIX_CACHE_PATHS=()
 declare -a CMD=()
 CMD_TAKEN=0
@@ -200,7 +213,7 @@ while [ $# -gt 0 ]; do
         for ((i=0; i<${#cluster}; i++)); do
             letter="${cluster:i:1}"
             case "$letter" in
-                a|r|v|i|c|l|s|h) ;;
+                a|r|v|i|c|l|s|b|h) ;;
                 p|n|P|f|e|C|m)
                     if [ "$i" -ne "$((${#cluster}-1))" ]; then
                         echo "mbox: -$letter takes arguments and must be last in '$1'" >&2
@@ -214,7 +227,7 @@ while [ $# -gt 0 ]; do
         set -- "${cluster_args[@]}" "$@"
     fi
     case "$1" in
-        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache|--desktop-layout)
+        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache|--desktop-layout|--read-only|--read-write|--config|--project)
             if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = -* ]]; then
                 echo "mbox: $1 requires a value (see mbox --help)" >&2
                 exit 2
@@ -228,6 +241,14 @@ while [ $# -gt 0 ]; do
         --expose-port) PUBLISH+=("$2"); shift 2 ;;
         -n | --network) NET_MODE="$2"; shift 2 ;;
         -P | --persist) EXTRA_PERSIST+=("$2"); shift 2 ;;
+        --read-only) EXTRA_RO_MOUNTS+=("$2"); shift 2 ;;
+        --read-write) EXTRA_MOUNTS+=("$2"); shift 2 ;;
+        --project) PROJECT_DIR="$2"; shift 2 ;;
+        --config) CONFIG_FILE="$2"; CONFIG_EXPLICIT=1; shift 2 ;;
+        --no-config) USE_CONFIG=0; shift ;;
+        -b | --shell-rc) SHELL_RC=1; shift ;;
+        --no-shell-rc) SHELL_RC=0; shift ;;
+        --no-clipboard) CLIPBOARD=0; DESKTOP_LAYOUT_SET=0; shift ;;
         -f | --file)
             shift
             file_count=0
@@ -275,7 +296,7 @@ while [ $# -gt 0 ]; do
         --camera-device) CAMERA_DEVICE="$2"; shift 2 ;;
         --no-camera) CAMERA=0; shift ;;
         --host-loopback) HOST_LOOPBACK=1; shift ;;
-        --no-visual) WAYLAND=0; shift ;;
+        --no-visual) WAYLAND=0; CLIPBOARD=0; DESKTOP_LAYOUT_SET=0; shift ;;
         --no-internet) NET_MODE=blocked; shift ;;
         --no-audio) AUDIO=0; shift ;;
         --no-microphone) MICROPHONE=0; shift ;;
@@ -288,8 +309,9 @@ while [ $# -gt 0 ]; do
             exit 2
             ;;
         *)
-            if [ -z "$PROJECT_DIR" ] && [ -d "$1" ]; then
+            if [ "$PROJECT_POSITIONAL_SET" = 0 ] && [ -d "$1" ]; then
                 PROJECT_DIR="$1"
+                PROJECT_POSITIONAL_SET=1
                 shift
             else
                 CMD=("$@")
@@ -305,6 +327,23 @@ done
 if [ -n "${MBOX_SANDBOX:-}" ]; then
     echo "mbox: already inside an mbox sandbox" >&2
     exit 1
+fi
+
+# Resolve profile only after parsing the command boundary. Reparse with defaults
+# first, so explicit scalar flags win. Never inspect application arguments.
+if [ "$USE_CONFIG" = 1 ]; then
+    if [ "$CONFIG_EXPLICIT" = 0 ]; then
+        @@PYTHON@@ -I "@@RESOURCES@@" init "$CONFIG_FILE" "@@DEFAULT_CONFIG@@"
+    fi
+    profile_args=$(mktemp)
+    if ! @@PYTHON@@ -I "@@RESOURCES@@" profile "$CONFIG_FILE" "${CMD[0]:-}" "$PROJECT_DIR" > "$profile_args"; then
+        rm -f -- "$profile_args"
+        exit 2
+    fi
+    defaults=()
+    mapfile -d '' -t defaults < "$profile_args"
+    rm -f -- "$profile_args"
+    exec "$0" --no-config "${defaults[@]}" "${ORIGINAL_ARGS[@]}"
 fi
 
 if [ "$DESKTOP_LAYOUT_SET" = 1 ] && { [ "$CLIPBOARD" != 1 ] || [ "$WAYLAND" != 1 ]; }; then
@@ -362,6 +401,8 @@ run_msb() {
 # cannot request additional exports or host builds. Keep snapshots outside the
 # project/home; never read a guest-writable manifest to decide host operations.
 NIX_CACHE_DIR=""
+FONT_RUNTIME=""
+RESOURCE_ARGS=""
 DESKTOP_RUNTIME=""
 WAYPIPE_PID=""
 CAMERA_PID=""
@@ -418,6 +459,8 @@ cleanup_desktop() {
     [ -z "$DESKTOP_RUNTIME" ] || rm -rf -- "$DESKTOP_RUNTIME"
 }
 cleanup_nix_cache() {
+    [ -z "$RESOURCE_ARGS" ] || rm -f -- "$RESOURCE_ARGS"
+    [ -z "$FONT_RUNTIME" ] || rm -rf -- "$FONT_RUNTIME"
     if [ -n "$NIX_CACHE_DIR" ] && [ "$NIX_CACHE_DIR" != /tmp/mbox-nix-cache.DRY-RUN ]; then
         rm -rf -- "$NIX_CACHE_DIR"
     fi
@@ -466,8 +509,16 @@ if [ -n "$NIX_CACHE_DIR" ]; then
 fi
 if [ "$SHARE_STORE" = 1 ]; then
     MOUNTS+=(--mount-dir "/nix/store:/nix/store:ro,nodev,nosuid")
-    # Build-validated configured directories; headless browsers probe fonts too.
-    source "@@FONT_MOUNTS@@"
+    if [ "$WAYLAND" = 1 ]; then
+        # Font discovery is visual-only. No app execution or whole-store scan.
+        FONT_RUNTIME=$(mktemp -d /tmp/mbox-fonts.XXXXXXXX)
+        RESOURCE_ARGS=$(mktemp)
+        PATH="$ENV_BIN/bin:$PATH" @@PYTHON@@ -I "@@RESOURCES@@" fonts "${CMD[0]:-}" "@@FC_LIST@@" "$FONT_RUNTIME" > "$RESOURCE_ARGS"
+        mapfile -d '' -t font_args < "$RESOURCE_ARGS"
+        MOUNTS+=("${font_args[@]}")
+        source "@@FONT_MOUNTS@@"
+        rm -f -- "$RESOURCE_ARGS"; RESOURCE_ARGS=""
+    fi
 fi
 
 # The project at its own path: the guest sees identical paths, so build systems,
@@ -543,8 +594,7 @@ done
 for m in @@BIND_RO@@; do
     IFS=: read -r src dest <<<"$m"
     mount_is_allowed "$dest" || continue
-    # Match sbox's --ro-bind-try: optional host resources may not exist, and
-    # Pi models/MCP configuration are files, not directory mounts.
+    # Optional host resources may not exist and can be files or directories.
     if [ -d "$src" ]; then
         MOUNTS+=(--mount-dir "$src:$dest:ro,nodev,nosuid")
     elif [ -f "$src" ]; then
@@ -575,12 +625,34 @@ for m in "${EXTRA_MOUNTS[@]}"; do
     fi
 done
 
-# The caller's own bashrc, so the guest shell has the same aliases, functions and prompt
-# as the host one (with the sandbox's mark in front of it — see programs.mbox.bashrc for
-# why that matters inside a VM). Mounted rather than written into the guest home, which is
-# a per-project state directory that must not quietly accumulate an out-of-date copy.
-if [ -n "$BASHRC" ] && [ -e "$BASHRC" ]; then
-    MOUNTS+=(--mount-file "$BASHRC:$GUEST_HOME/.bashrc:ro")
+# The caller's own bashrc is never an ambient grant. Explicit read-only grants
+# preserve logical destinations for symlinked host configuration files.
+for m in "${EXTRA_RO_MOUNTS[@]}"; do
+    destination=$(realpath -ms -- "$m")
+    shared=$(realpath -e -- "$m") || exit 2
+    case "$shared:$destination" in
+        *$'\n'*) echo 'mbox: read-only paths cannot contain newlines' >&2; exit 2 ;;
+    esac
+    if [[ "$shared" = *:* || "$destination" = *:* ]] || { [ ! -f "$shared" ] && [ ! -d "$shared" ]; }; then
+        echo 'mbox: --read-only requires a regular file/directory without colons' >&2; exit 2
+    fi
+    for mounted in "${MOUNTS[@]}"; do
+        case "$mounted" in
+            *:"$destination":*|"$destination":*) echo 'mbox: read-only destination already mounted' >&2; exit 2 ;;
+        esac
+    done
+    if [ -d "$shared" ]; then
+        MOUNTS+=(--mount-dir "$shared:$destination:ro,nodev,nosuid")
+    else
+        MOUNTS+=(--mount-file "$shared:$destination:ro,nodev,nosuid")
+    fi
+done
+if [ "$SHELL_RC" = 1 ]; then
+    RESOURCE_ARGS=$(mktemp)
+    @@PYTHON@@ -I "@@RESOURCES@@" shell-rc > "$RESOURCE_ARGS"
+    mapfile -d '' -t rc_args < "$RESOURCE_ARGS"
+    MOUNTS+=("${rc_args[@]}")
+    rm -f -- "$RESOURCE_ARGS"; RESOURCE_ARGS=""
 fi
 
 # Generated startup files and account names, not the host's /etc.

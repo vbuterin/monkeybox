@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""No -v: normal bundled fonts in disposable Firefox headless screenshot."""
+"""No -v: explicit bundled-font grant for a headless browser (full VM test)."""
 import os
 from pathlib import Path
 import signal
@@ -16,7 +16,11 @@ with tempfile.TemporaryDirectory(prefix='mbox-headless-fonts-') as tmp:
              MBOX_STATE_ROOT=str(root/'state'),MSB_HOME=str(root/'state/engine'))
     for k in ('DISPLAY','WAYLAND_DISPLAY','SWAYSOCK','MSB_PATH','MBOX_SANDBOX'):env.pop(k,None)
     start=time.monotonic()
-    p=subprocess.Popen([sys.argv[1],str(root/'project'),'--memory','4G','--',
+    # Nonvisual runs intentionally do not discover fonts automatically.
+    font_directory = Path(firefox).resolve().parent.parent / 'lib/firefox/fonts'
+    assert font_directory.is_dir(), font_directory
+    p=subprocess.Popen([sys.argv[1],'--no-config',str(root/'project'),
+        '--read-only',str(font_directory),'--memory','4G','--',
         'bash','-c','mkdir -p "$HOME/profile"; exec "$1" --headless --no-remote --profile "$HOME/profile" --screenshot "$2/screenshot.png" about:blank','probe',firefox,str(root/'project')],
         env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
     try:

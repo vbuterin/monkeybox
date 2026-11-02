@@ -60,5 +60,5 @@ PY
 for pid in "${pids[@]}"; do
     kill -0 "$pid" 2>/dev/null || { echo 'mbox: loopback relay exited' >&2; exit 1; }
 done
-export PATH="@@PI_BIN@@:$PATH"
+export PATH="@@TOOLS_BIN@@:$PATH"
 "$@"

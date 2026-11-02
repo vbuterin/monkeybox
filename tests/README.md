@@ -1,5 +1,16 @@
 # Tests
 
+## Application profiles and host resources
+
+`python3 tests/mbox-resources.py` uses a private HOME and synthetic fontconfig
+output. Tests concurrent/atomic first-use `.mboxrc` creation, no overwrite of
+files or dangling symlinks, strict TOML validation, program-specific grants,
+CLI override/command boundaries, read-only symlink destinations and collisions,
+sh/bash/zsh/fish RC selection, and visual-only font copying. Full launcher dry-runs
+use a private Unix socket without touching live input, profiles or VM state.
+This does not replace packaged VM/font-rendering tests. The headless Firefox
+runtime test now makes its required font-directory grant explicitly.
+
 ## Nested desktop lifetime regressions
 
 - `python3 tests/mbox-desktop-session-policy.py` runs the real supervisor and

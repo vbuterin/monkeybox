@@ -120,9 +120,25 @@ rendering/family rules. Fontconfig's standard rendering/substitution rules are
 included (previously all includes were disabled). No host home or font cache is
 shared. Expensive
 statfs on the aggregate host Nix store can otherwise block font discovery.
-The `desktop` package also configures a narrow same-path Firefox font-directory
-mount for Firefox's bundled fonts; it applies headlessly too. Custom packages
-can set `guestFontMounts`; nonexistent directories fail at build time.
+With `-v`, the launcher queries host `fc-list` and copies discovered font files
+into temporary private storage, mounted read-only at `/usr/share/mbox-host-fonts`.
+It does not share font caches, arbitrary fontconfig files or font parent directories.
+Discovery is bounded (15-second fontconfig timeout, 8192 files, 512 MiB total,
+128 MiB per file). Built-in fonts remain available in nonvisual runs.
+
+The launched executable's resolved Nix package output is also scanned for loose
+font files, without executing the application, following directory symlinks or
+walking the entire store/dependency closure. Containing directories get narrow
+same-path read-only mounts to avoid aggregate-store statfs probes. The scan is
+bounded to 20000 entries. Wrappers whose resources live in separate outputs and
+embedded/archived fonts may need explicit `guestFontMounts`; this override is also
+visual-only, and nonexistent directories fail at build time. This is discovery,
+not a guarantee that every application's private font lookup works.
+
+Headless runs no longer get these mounts automatically. A headless application
+that probes bundled fonts may still hit the backend bug; explicitly grant its
+font directory with `--read-only PATH` and use `--no-config` if its profile enables
+visual mode. The old headless workaround is not claimed to remain automatic.
 
 These are measured, scoped mitigations, not a fix for backend filesystem
 accounting. Shared filesystem free-space/inode reporting is synthetic and may

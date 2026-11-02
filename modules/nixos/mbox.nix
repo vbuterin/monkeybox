@@ -83,7 +83,8 @@ let
   guestFontPath = p: "/usr/share/mbox-fonts/${builtins.baseNameOf (toString p)}";
   guestFontsBase = pkgs.makeFontsConf {
     fontDirectories = guestFontPackages;
-    impureFontDirectories = [];
+    # Exists only for visual launches; populated with copied discovered fonts.
+    impureFontDirectories = [ "/usr/share/mbox-host-fonts" ];
     # Restore fontconfig's rendering/substitution rules, not just font discovery.
     includes = [ "${pkgs.fontconfig.out}/etc/fonts/conf.d" ] ++ cfg.fontConfigIncludes;
   };
@@ -255,7 +256,7 @@ let
   );
 
   loopbackGuest = pkgs.writeShellScript "mbox-host-loopback" (builtins.replaceStrings
-    [ "@@PYTHON@@" "@@SOCAT@@" "@@PI_BIN@@" ]
+    [ "@@PYTHON@@" "@@SOCAT@@" "@@TOOLS_BIN@@" ]
     [ "${pkgs.python3}/bin/python3" "${pkgs.socat}/bin/socat"
       "${mboxEnv}/bin" ]
     (builtins.readFile ../../programs/mbox/host-loopback.sh.in));
@@ -553,6 +554,9 @@ let
       "@@CAMERA_HOST@@"
       "@@CAMERA_GUEST@@"
       "@@FONT_MOUNTS@@"
+      "@@RESOURCES@@"
+      "@@DEFAULT_CONFIG@@"
+      "@@FC_LIST@@"
       "@@IMAGE@@"
       "@@CPUS@@"
       "@@MEMORY@@"
@@ -574,7 +578,6 @@ let
       "@@BASE_IMAGE_TAR@@"
       "@@BASE_IMAGE_TAG@@"
       "@@ROOT_DISK@@"
-      "@@BASHRC@@"
       "@@BASHRC_SYSTEM@@"
       "@@SHARE_PROFILE@@"
       "@@GUEST_SHELL_STORE@@"
@@ -602,6 +605,9 @@ let
       "${cameraHost}"
       "${cameraGuest}"
       "${fontMounts}"
+      "${../../programs/mbox/resources.py}"
+      "${../../programs/mbox/default.mboxrc}"
+      "${pkgs.fontconfig.bin}/bin/fc-list"
       cfg.image
       (toString cfg.cpus)
       cfg.memory
@@ -623,7 +629,6 @@ let
       "${cfg.baseImageTar}"
       baseImageRef
       (if cfg.rootDisk == null then "" else "--root-disk=${cfg.rootDisk}")
-      (if cfg.bashrc == null then "" else "${cfg.bashrc}")
       "${bashrcSystem}"
       (if cfg.shareHostProfile then "1" else "0")
       "${pkgs.bashInteractive}"
@@ -687,8 +692,9 @@ in
       default = [];
       description = ''
         Immutable font directories given separate same-path read-only mounts
-        whenever shareNixStore is enabled, including headless runs. This avoids
-        aggregate-store statfs stalls for configured browsers without changing
+        for visual (-v) launches when shareNixStore is enabled. Normally discovered
+        automatically in the launched package; this is an override for unusual layouts.
+        This avoids aggregate-store statfs stalls without changing
         fonts or profiles. Missing directories fail the wrapper build. The
         desktop configuration, not this module, selects browser packages.
       '';
@@ -877,22 +883,6 @@ in
         As bind, mounted read-only. Note that a host sysfs mounted over the guest's
         own /sys shows the host's hardware rather than the VM's, which is what you
         want for reading device capabilities and not what you want for anything else.
-      '';
-    };
-
-    bashrc = lib.mkOption {
-      type = with lib.types; nullOr path;
-      default = null;
-      description = ''
-        File mounted read-only as the guest's ~/.bashrc, so the shell inside a sandbox has
-        the same functions, aliases and prompt as the one outside. Mounted rather than
-        written into the guest home, because that home is a per-project state directory and
-        a copy in it would go stale without anything noticing. Null mounts nothing, which is
-        what a sandbox booted from an unrelated base image wants.
-
-        Read the file you point this at before doing so: it runs inside the VM, where a
-        Wayland clipboard tool, a host path that is not mounted, or an alias naming a
-        command the guest lacks each fails in its own way rather than the host's.
       '';
     };
 

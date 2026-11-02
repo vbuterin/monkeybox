@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Host-side declarative application profiles and bounded resource discovery.
+
+Never source user configuration or execute a discovered application. Stdout is
+NUL-delimited argv; diagnostics go to stderr. No shell evaluation/expansion.
+"""
+import argparse
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tomllib
+
+
+def emit(values):
+    for value in values:
+        if '\0' in value:
+            raise ValueError('NUL in argument')
+        sys.stdout.buffer.write(os.fsencode(value) + b'\0')
+
+
+def path(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError('expected a nonempty path string')
+    result = os.path.expanduser(value)
+    if not os.path.isabs(result) or any(c in result for c in ':\n\0'):
+        raise ValueError(f'expected an absolute path without delimiters: {value!r}')
+    return result
+
+
+def initialize_config(destination, template):
+    """Publish a complete template atomically, never replace an existing entry."""
+    import tempfile
+    destination = Path(destination)
+    if os.path.lexists(destination):
+        return
+    fd, temporary = tempfile.mkstemp(prefix='.mboxrc-', dir=destination.parent)
+    try:
+        with os.fdopen(fd, 'wb') as output, open(template, 'rb') as source:
+            shutil.copyfileobj(source, output)
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            pass  # Concurrent launcher or user owns the existing entry.
+    finally:
+        os.unlink(temporary)
+
+
+def profile(config, program, project=''):
+    with open(config, 'rb') as stream:
+        data = tomllib.loads(stream.read(65537).decode())
+        if stream.tell() > 65536:
+            raise ValueError('mboxrc exceeds 64 KiB')
+    if set(data) - {'version', 'programs'} or data.get('version') != 1:
+        raise ValueError('mboxrc requires version = 1 and a programs table')
+    programs = data.get('programs', {})
+    if not isinstance(programs, dict):
+        raise ValueError('programs must be a table')
+    # Validate all entries, not just the selected one: typos must not hide.
+    for name, entry in programs.items():
+        if not isinstance(entry, dict) or set(entry) - {'flags', 'project', 'read_only', 'read_write'}:
+            raise ValueError(f'invalid profile: {name}')
+        flags = entry.get('flags', [])
+        validate_flags(flags)
+        if entry.get('project', 'cwd') not in ('home', 'cwd'):
+            raise ValueError('profile project must be home or cwd')
+        for key in ('read_only', 'read_write'):
+            values = entry.get(key, [])
+            if not isinstance(values, list):
+                raise ValueError(f'{key} must be a list')
+            for value in values:
+                path(value)
+    entry = programs.get(os.path.basename(program), {})
+    result = list(entry.get('flags', []))
+    if entry.get('project') == 'home':
+        result += ['--project', str(Path.home())]
+    effective_project = project or (str(Path.home()) if entry.get('project') == 'home' else os.getcwd())
+    for key, option in [('read_only', '--read-only'), ('read_write', '--read-write')]:
+        for value in entry.get(key, []):
+            expanded = path(value)
+            if os.path.realpath(expanded) == os.path.realpath(effective_project):
+                continue  # The explicitly selected project already owns this mount.
+            if os.path.isfile(expanded) or os.path.isdir(expanded):
+                result += [option, expanded]
+    return result
+
+
+def validate_flags(flags):
+    # Fixed-arity only: cannot smuggle a command, project or variadic grants.
+    switches = {'--visual', '--clipboard', '--audio', '--microphone', '--camera',
+                '--no-visual', '--no-clipboard', '--no-audio', '--no-microphone',
+                '--no-camera', '--internet', '--no-internet', '--host-loopback',
+                '--shell-rc', '--no-shell-rc', '--ephemeral', '--swap'}
+    values = {'--memory', '--cpus', '--network', '--allow-port', '--expose-port',
+              '--desktop-layout', '--swap-mib', '--env', '-m', '-p', '-e', '-n'}
+    if not isinstance(flags, list) or not all(isinstance(x, str) and '\0' not in x for x in flags):
+        raise ValueError('flags must be a list of strings without NUL')
+    index = 0
+    while index < len(flags):
+        flag = flags[index]
+        if flag in values:
+            index += 1
+            if index == len(flags) or not flags[index] or flags[index].startswith('-'):
+                raise ValueError(f'missing profile flag value: {flag}')
+        elif flag not in switches and not (flag.startswith('-') and not flag.startswith('--')
+                                          and len(flag) > 1 and set(flag[1:]) <= set('avcirlsb')):
+            raise ValueError(f'unsupported profile flag: {flag}')
+        index += 1
+
+
+def shell_rc():
+    home = str(Path.home())
+    config = path(os.environ.get('XDG_CONFIG_HOME', home + '/.config'))
+    zdir = path(os.environ.get('ZDOTDIR', home))
+    # Only files/directories conventionally containing startup code. No history,
+    # credentials, fish_variables or whole config trees. Symlink source resolves
+    # but its logical destination is retained.
+    candidates = [(home + '/' + name, home + '/' + name) for name in
+                  ('.profile', '.shrc', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout')]
+    candidates += [(zdir + '/' + name, home + '/' + name) for name in
+                   ('.zshenv', '.zprofile', '.zshrc', '.zlogin', '.zlogout')]
+    candidates += [(config + '/fish/' + name, home + '/.config/fish/' + name) for name in
+                   ('config.fish', 'conf.d', 'functions', 'completions')]
+    result = []
+    for source, destination in candidates:
+        if os.path.isfile(source) or os.path.isdir(source):
+            result += mount(source, destination)
+    return result
+
+
+def mount(source, destination):
+    source = path(os.path.realpath(source))
+    destination = path(destination)
+    return ['--mount-dir' if os.path.isdir(source) else '--mount-file',
+            f'{source}:{destination}:ro,nodev,nosuid']
+
+
+def bundled_fonts(program):
+    executable = shutil.which(program) if program else None
+    if not executable:
+        return []
+    resolved = Path(executable).resolve()
+    # This launcher shares Nix packages. Never scan arbitrary project trees,
+    # HOME, the whole store or transitive package dependencies.
+    parts = resolved.parts
+    if len(parts) < 5 or parts[1:3] != ('nix', 'store'):
+        return []
+    root = Path(*parts[:4])
+    found = set()
+    budget = 20000
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        budget -= len(dirs) + len(files) + 1
+        if budget < 0:
+            raise ValueError(f'font discovery exceeded 20000 entries in {root}')
+        dirs[:] = sorted(d for d in dirs if not Path(directory, d).is_symlink())
+        if any(Path(f).suffix.lower() in ('.ttf', '.otf', '.ttc', '.otc', '.woff', '.woff2') for f in files):
+            found.add(directory)
+    return sorted(found)
+
+
+def fonts(program, fc_list, target):
+    # Host fontconfig discovers installed fonts across distributions. Query data
+    # only; do not copy its arbitrary configuration, caches or parent directories.
+    reply = subprocess.run([fc_list, '--format', '%{file}\\n'], capture_output=True,
+                           timeout=15, check=True)
+    if len(reply.stdout) > 8 * 1024 * 1024:
+        raise ValueError('font discovery output too large')
+    paths = set(os.fsdecode(reply.stdout).splitlines())
+    if len(paths) > 8192:
+        raise ValueError('font discovery exceeded 8192 fonts')
+    # Runtime imports copy only font bytes to a private temporary directory.
+    # This avoids thousands of virtio mounts and the aggregate-store statfs bug.
+    target = Path(target)
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    total = 0
+    for index, value in enumerate(sorted(paths)):
+        source = Path(value)
+        if not source.is_file() or source.suffix.lower() not in ('.ttf', '.otf', '.ttc', '.otc', '.pfa', '.pfb', '.pcf', '.gz'):
+            continue
+        size = source.stat().st_size
+        total += size
+        if size > 128 * 1024 * 1024 or total > 512 * 1024 * 1024:
+            raise ValueError('discovered fonts exceed 512 MiB total / 128 MiB per file')
+        shutil.copyfile(source, target / f'{index}{source.suffix}')
+    result = mount(str(target), '/usr/share/mbox-host-fonts')
+    for directory in bundled_fonts(program):
+        result += mount(directory, directory)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('operation', choices=['init', 'profile', 'shell-rc', 'fonts'])
+    parser.add_argument('arguments', nargs='*')
+    args = parser.parse_args()
+    try:
+        if args.operation == 'init':
+            initialize_config(*args.arguments)
+            result = []
+        elif args.operation == 'profile':
+            result = profile(*args.arguments)
+        elif args.operation == 'shell-rc':
+            result = shell_rc()
+        else:
+            program, fc_list, target = args.arguments
+            # Target is passed explicitly; no guest-provided paths are consulted.
+            result = fonts(program, fc_list, target)
+        emit(result)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+        print(f'mbox: {error}', file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
