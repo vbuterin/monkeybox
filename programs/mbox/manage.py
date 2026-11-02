@@ -27,6 +27,7 @@ ID_PATTERN = r'[1-9][0-9]*-[0-9]+'
 # cached briefly; the cache is advisory state that `list` may always skip.
 GUEST_TTL_SECONDS = 15
 CACHE_NAME = 'guest-memory-cache.json'
+RECORD_LIMIT = 256 * 1024
 
 
 def directory():
@@ -47,7 +48,8 @@ def process(pid):
         raise RuntimeError('process belongs to another user')
     fields = (path / 'stat').read_text().rsplit(')', 1)[1].split()
     return dict(pid=pid, start=fields[19], parent=int(fields[1]),
-                rss_bytes=int(fields[21]) * os.sysconf('SC_PAGE_SIZE'), state=fields[0])
+                rss_bytes=int(fields[21]) * os.sysconf('SC_PAGE_SIZE'), state=fields[0],
+                pgrp=int(fields[2]), tty=int(fields[4]), tpgid=int(fields[5]))
 
 
 def live(record):
@@ -60,11 +62,39 @@ def live(record):
     return p
 
 
-def register(pid, name, msb, engine, firmware, memory, label):
+def mount_metadata(arguments, home):
+    """Describe final host binds, never infer permissions from guest paths."""
+    if len(arguments) % 2:
+        raise ValueError('invalid mount argument pairs')
+    mounts = []
+    for flag, value in zip(arguments[::2], arguments[1::2]):
+        if flag not in ('--mount-dir', '--mount-file'):
+            if flag not in ('--tmpfs', '--mount-owned'):
+                raise ValueError('invalid mount flag')
+            continue  # no host source for guest-only storage
+        source, destination, options = value.split(':', 2)
+        if not source.startswith('/') or not destination.startswith('/'):
+            raise ValueError('mount paths must be absolute')
+        display = source
+        if source == home or source.startswith(home.rstrip('/') + '/'):
+            display = '~' + source[len(home.rstrip('/')):]
+        mounts.append(dict(source=source, destination=destination, display=display,
+                           kind='directory' if flag == '--mount-dir' else 'file',
+                           mode='ro' if 'ro' in options.split(',') else 'rw'))
+    return mounts
+
+
+def register(pid, name, msb, engine, firmware, memory, label, mounts=None, waypipe_pid=None):
     p = process(pid)
-    # Do not save command lines, environment, clipboard or project contents.
+    # Only host mount metadata, never command lines, environment or file contents.
     record = dict(pid=pid, start=p['start'], name=name, msb=msb, engine=engine,
-                  firmware=firmware, memory_limit=memory, label=Path(label).name[:80])
+                  firmware=firmware, memory_limit=memory, label=Path(label).name[:80],
+                  mounts=mounts, sway_socket=os.environ.get('SWAYSOCK'))
+    if waypipe_pid:
+        bridge = process(waypipe_pid)
+        record['waypipe'] = dict(pid=bridge['pid'], start=bridge['start'])
+    if len(json.dumps(record).encode()) > RECORD_LIMIT:
+        raise ValueError('instance metadata exceeds size limit')
     key = f'{pid}-{p["start"]}'
     path = directory() / (key + '.json')
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -88,10 +118,10 @@ def read_record(key):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd) as stream:
         st = os.fstat(stream.fileno())
-        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077 or st.st_size > 8192:
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077 or st.st_size > RECORD_LIMIT:
             raise RuntimeError('unsafe instance record')
-        raw = stream.read(8193)
-        if len(raw) > 8192:
+        raw = stream.read(RECORD_LIMIT + 1)
+        if len(raw) > RECORD_LIMIT:
             raise ValueError('record grew beyond limit')
         record = json.loads(raw)
     if not isinstance(record, dict) or type(record.get('pid')) is not int:
@@ -101,6 +131,14 @@ def read_record(key):
             raise ValueError('invalid instance field')
     if not re.fullmatch(r'mbox-[a-zA-Z0-9-]+', record['name']):
         raise ValueError('invalid sandbox name')
+    mounts = record.get('mounts')
+    if mounts is not None:
+        if not isinstance(mounts, list) or any(
+                not isinstance(item, dict) or
+                any(not isinstance(item.get(k), str) for k in
+                    ('source', 'destination', 'display', 'kind', 'mode'))
+                for item in mounts):
+            raise ValueError('invalid mount metadata')
     return record
 
 
@@ -208,7 +246,7 @@ def listing():
                       memory_limit=record['memory_limit'],
                       memory_limit_mib=memory_limit_mib(record['memory_limit']),
                       host_rss_bytes=sum(p['rss_bytes'] for p in children),
-                      processes=len(children),
+                      processes=len(children), mounts=record.get('mounts'),
                       guest_captured_unix_seconds=captured)
         fields.update(guest_fields(guest))
         items.append(fields)
@@ -486,6 +524,116 @@ def kill_instance(key):
     return dict(message='Termination requested for the selected process tree; verify it disappears. Unsaved work may be lost.')
 
 
+def border_targets(nodes, records, socket_path, get_process=process):
+    """Only registered bridges or foreground terminal ancestors; no title matching."""
+    targets = set()
+    for record in records:
+        if record.get('sway_socket') != socket_path:
+            continue
+        try:
+            launcher = get_process(record['pid'])
+            if launcher['start'] != record['start'] or launcher['state'] in ('Z', 'X', 'x'):
+                continue
+            bridge = record.get('waypipe')
+            bridge_pids = set()
+            if bridge:
+                p = get_process(bridge['pid'])
+                if p['start'] == bridge['start'] and p['state'] not in ('Z', 'X', 'x'):
+                    bridge_pids.add(p['pid'])
+            # A background job must not turn the host shell into an mbox window.
+            terminal_pids = set()
+            if not bridge and launcher['tty'] and launcher['pgrp'] == launcher['tpgid']:
+                p = launcher
+                for _ in range(64):
+                    terminal_pids.add(p['pid'])
+                    if p['parent'] <= 1:
+                        break
+                    try:
+                        p = get_process(p['parent'])
+                    except (OSError, RuntimeError, ValueError, KeyError):
+                        break
+            for node in nodes:
+                pid = node.get('pid')
+                if not isinstance(pid, int):
+                    continue
+                if pid in terminal_pids:
+                    # A terminal server may own several windows. Without a
+                    # per-window PTY association, do not mark unrelated tabs.
+                    if sum(n.get('pid') == pid for n in nodes) == 1:
+                        targets.add(node['id'])
+                    continue
+                # Waypipe may fork its display client. Follow only ancestry,
+                # never arbitrary descendants of the shell/terminal.
+                for _ in range(64):
+                    if pid in bridge_pids:
+                        targets.add(node['id'])
+                        break
+                    try:
+                        p = get_process(pid)
+                    except (OSError, RuntimeError, ValueError, KeyError):
+                        break
+                    if p['parent'] <= 1:
+                        break
+                    pid = p['parent']
+        except (OSError, RuntimeError, ValueError, KeyError):
+            continue
+    return targets
+
+
+def watch_borders(swaymsg):
+    """Visual-only reconciliation; never focus windows or inject input."""
+    socket_path = os.environ.get('SWAYSOCK')
+    if not socket_path:
+        raise RuntimeError('SWAYSOCK is required')
+    active = set()
+
+    def ipc(*args):
+        return json.loads(bounded_command([swaymsg, '-s', socket_path, '-r', *args],
+                                         dict(os.environ), timeout=2, limit=8 * 1024 * 1024))
+
+    def walk(node):
+        yield node
+        for child in node.get('nodes', []) + node.get('floating_nodes', []):
+            yield from walk(child)
+
+    def stopped(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stopped)
+    try:
+        while True:
+            nodes = list(walk(ipc('-t', 'get_tree')))
+            records = []
+            for path in directory().glob('*.json'):
+                if re.fullmatch(ID_PATTERN, path.stem):
+                    try:
+                        records.append(load(path.stem))
+                    except (OSError, RuntimeError, ValueError, KeyError):
+                        pass
+            desired = border_targets(nodes, records, socket_path)
+            # Read back compositor state: also recovers after service restarts.
+            if desired and any('mbox_outline' not in n for n in nodes if n['id'] in desired):
+                raise RuntimeError('Sway lacks the Monkeybox outline patch; restart the updated compositor')
+            active = {n['id'] for n in nodes if n.get('mbox_outline', False)}
+            for enabled, ids in ((True, desired - active), (False, active - desired)):
+                for ident in ids:
+                    reply = ipc(f'[con_id={int(ident)}] border monkeybox {"on" if enabled else "off"}')
+                    if not all(item.get('success') for item in reply):
+                        # Closing between GET_TREE and the command is normal.
+                        if any(n['id'] == ident for n in walk(ipc('-t', 'get_tree'))):
+                            raise RuntimeError('Sway rejected the Monkeybox outline command')
+            active = desired
+            time.sleep(0.75)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for ident in active:
+            try:
+                ipc(f'[con_id={int(ident)}] border monkeybox off')
+            except (OSError, RuntimeError, ValueError):
+                pass
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description='Host-only Monkeybox management')
@@ -499,14 +647,22 @@ def main():
         p.add_argument('id', help='instance ID, or the label shown by list')
     p = sub.add_parser('unregister', help='remove one registry entry')
     p.add_argument('id', help='instance ID, or the label shown by list')
+    p = sub.add_parser('borders', help='host Sway window indicator service')
+    p.add_argument('--swaymsg', required=True)
     p = sub.add_parser('register')
+    p.add_argument('--waypipe-pid', type=int)
+    p.add_argument('--mounts', nargs=argparse.REMAINDER)
     p.add_argument('pid', type=int)
     for name in ('name', 'msb', 'engine', 'firmware', 'memory', 'label'):
         p.add_argument(name)
     args = parser.parse_args()
     if args.action == 'register':
         # The launcher captures this key; it stays raw regardless of output style.
-        print(register(args.pid, args.name, args.msb, args.engine, args.firmware, args.memory, args.label))
+        mounts = mount_metadata(args.mounts, os.path.realpath(os.environ['HOME'])) if args.mounts is not None else None
+        print(register(args.pid, args.name, args.msb, args.engine, args.firmware, args.memory, args.label,
+                       mounts, args.waypipe_pid))
+    elif args.action == 'borders':
+        watch_borders(args.swaymsg)
     elif args.action == 'unregister':
         (directory() / (resolve(args.id) + '.json')).unlink(missing_ok=True)
     elif args.action == 'list':

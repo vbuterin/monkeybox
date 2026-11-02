@@ -966,7 +966,9 @@ fi
 
 if [ "$DRY_RUN" != 1 ]; then
     # Best-effort desktop registration; headless hosts may have no user runtime.
-    MANAGEMENT_ID="$(@@MANAGE@@ register "$$" "$SANDBOX" "$MSB" "$MSB_HOME" "$MSB_LIBKRUNFW_PATH" "$MEMORY" "${CMD[0]:-shell}")" || {
+    management_args=()
+    if [ -n "$WAYPIPE_PID" ]; then management_args+=(--waypipe-pid "$WAYPIPE_PID"); fi
+    MANAGEMENT_ID="$(@@MANAGE@@ register "${management_args[@]}" "$$" "$SANDBOX" "$MSB" "$MSB_HOME" "$MSB_LIBKRUNFW_PATH" "$MEMORY" "${CMD[0]:-shell}" --mounts "${MOUNTS[@]}")" || {
         MANAGEMENT_ID=""
         echo 'mbox: instance management registration unavailable' >&2
     }

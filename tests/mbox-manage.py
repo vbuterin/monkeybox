@@ -50,6 +50,83 @@ class Management(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.load(key)
 
+    def test_mount_metadata_uses_sources_and_home_boundary(self):
+        mounts = m.mount_metadata([
+            '--mount-dir', '/home/test/project:/work:rw,nodev',
+            '--mount-dir', '/private/home:/home/test:rw',
+            '--mount-dir', '/home/testing:/other:ro',
+            '--mount-file', '/home/test/<b>file</b>:/file:ro',
+            '--tmpfs', '/tmp:512M', '--mount-owned', '/swap:kind=disk,size=128M',
+        ], '/home/test')
+        self.assertEqual([v['display'] for v in mounts],
+                         ['~/project', '/private/home', '/home/testing', '~/<b>file</b>'])
+        self.assertEqual([v['mode'] for v in mounts], ['rw', 'rw', 'ro', 'ro'])
+        self.assertEqual(mounts[1]['destination'], '/home/test')
+        self.assertEqual(mounts[-1]['kind'], 'file')
+        for arguments in (['--mount-dir'], ['--bad', '/a:/b:rw'],
+                          ['--mount-dir', 'relative:/b:rw']):
+            with self.assertRaises(ValueError):
+                m.mount_metadata(arguments, '/home/test')
+        key = m.register(os.getpid(), 'mbox-fixture', '/msb', '/engine', '/fw',
+                         '1024', 'app', mounts, os.getpid())
+        self.assertEqual(m.load(key)['mounts'], mounts)
+        self.assertEqual(m.load(key)['waypipe']['pid'], os.getpid())
+
+    def test_border_association_and_stale_foreign_background_processes(self):
+        def proc(pid, parent=1, **kwargs):
+            return dict(pid=pid, parent=parent, start='1', state='S', tty=1,
+                        pgrp=20, tpgid=20, **kwargs)
+        processes = {10: proc(10), 20: proc(20, 10), 30: proc(30, 20),
+                     40: proc(40, 30), 50: proc(50)}
+        def lookup(pid):
+            if pid not in processes:
+                raise RuntimeError('foreign or exited process')
+            return processes[pid]
+        nodes = [{'id': 1, 'pid': 999}, {'id': 2, 'pid': 10},
+                 {'id': 3, 'pid': 40}, {'id': 4, 'pid': 50}]
+        record = dict(pid=20, start='1', sway_socket='/private/sway',
+                      waypipe=dict(pid=30, start='1'))
+        self.assertEqual(m.border_targets(nodes, [record], '/private/sway', lookup), {3})
+        self.assertEqual(m.border_targets(nodes, [record], '/other/sway', lookup), set())
+        for field in ('start',):
+            stale = {**record, field: 'reused'}
+            self.assertEqual(m.border_targets(nodes, [stale], '/private/sway', lookup), set())
+        record['waypipe']['start'] = 'reused'
+        self.assertEqual(m.border_targets(nodes, [record], '/private/sway', lookup), set())
+        del record['waypipe']
+        self.assertEqual(m.border_targets(nodes, [record], '/private/sway', lookup), {2})
+        # Shared terminal servers are ambiguous; do not outline every window.
+        self.assertEqual(m.border_targets(nodes + [{'id': 5, 'pid': 10}], [record], '/private/sway', lookup), set())
+        processes[20]['tpgid'] = 777
+        self.assertEqual(m.border_targets(nodes, [record], '/private/sway', lookup), set())
+        processes[20]['tpgid'] = 20
+        processes[20]['tty'] = 0
+        self.assertEqual(m.border_targets(nodes, [record], '/private/sway', lookup), set())
+
+    def test_border_service_reconciles_and_cleans_without_focus_commands(self):
+        key = self.register()
+        calls = []
+        # Stale compositor flag 9 is cleared; target 7 is enabled then cleaned
+        # on termination. Synthetic IPC only: never contact a desktop socket.
+        def ipc(argv, env, **kwargs):
+            calls.append(argv)
+            if argv[-2:] == ['-t', 'get_tree']:
+                return json.dumps({'id': 0, 'nodes': [
+                    {'id': 7, 'pid': 20, 'mbox_outline': False},
+                    {'id': 9, 'pid': 30, 'mbox_outline': True}]}).encode()
+            return b'[{"success":true}]'
+        with patch.dict(os.environ, SWAYSOCK='/private/test-socket'), \
+                patch.object(m, 'bounded_command', side_effect=ipc), \
+                patch.object(m, 'border_targets', return_value={7}), \
+                patch.object(m.signal, 'signal'), \
+                patch.object(m.time, 'sleep', side_effect=KeyboardInterrupt):
+            m.watch_borders('/fake/swaymsg')
+        commands = [c[-1] for c in calls if c[-1] != 'get_tree']
+        self.assertEqual(commands, ['[con_id=7] border monkeybox on',
+                                    '[con_id=9] border monkeybox off',
+                                    '[con_id=7] border monkeybox off'])
+        self.assertTrue(all(c[:3] == ['/fake/swaymsg', '-s', '/private/test-socket'] for c in calls))
+
     def test_reused_pid_is_never_signalled(self):
         key = self.register()
         record = m.load(key)
