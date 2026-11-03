@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guest-local Cut guard. No guest-to-host input interface."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -10,8 +11,19 @@ TERMINALS = {'foot', 'footclient', 'alacritty', 'kitty', 'wezterm-gui',
              'st', 'terminator', 'xfce4-terminal', 'tilix', 'ghostty'}
 
 
+def socket_path():
+    # msb exec doesn't inherit the compositor child's environment. Never rely
+    # on ambient SWAYSOCK or swaymsg's PATH-based `sway --get-socketpath` fallback.
+    runtime = Path(os.environ['XDG_RUNTIME_DIR'])
+    sockets = [p for p in runtime.glob(f'sway-ipc.{os.getuid()}.*.sock')
+               if p.is_socket() and p.stat().st_uid == os.getuid()]
+    if len(sockets) != 1:
+        raise ValueError('missing or ambiguous guest compositor socket')
+    return str(sockets[0])
+
+
 def focused(swaymsg):
-    reply = subprocess.run([swaymsg, '-t', 'get_tree', '-r'], check=True,
+    reply = subprocess.run([swaymsg, '-s', socket_path(), '-t', 'get_tree', '-r'], check=True,
                            capture_output=True, timeout=2)
     if len(reply.stdout) > 8 * 1024 * 1024:
         raise ValueError('tree too large')

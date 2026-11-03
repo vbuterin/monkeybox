@@ -21,6 +21,39 @@ import runpy
 from types import SimpleNamespace
 cut = runpy.run_path(str(root/'programs/mbox/clipboard-guest-cut.py'))
 cut_globals = cut['main'].__globals__
+# Exercise the actual guest query path without SWAYSOCK or a sway binary on PATH.
+# Fake IPC sockets remain inside a private temporary runtime, never the desktop.
+import socket
+with tempfile.TemporaryDirectory(prefix='mbox-cut-ipc-') as runtime, \
+        patch.dict(os.environ, XDG_RUNTIME_DIR=runtime, SWAYSOCK='/wrong/ambient.sock'):
+    first = socket.socket(socket.AF_UNIX)
+    second = socket.socket(socket.AF_UNIX)
+    try:
+        address = str(Path(runtime) / f'sway-ipc.{os.getuid()}.123.sock')
+        first.bind(address)
+        assert cut['socket_path']() == address
+        tree = {'nodes': [{'id': 7, 'pid': os.getpid(), 'focused': True}]}
+        with patch.object(subprocess, 'run', return_value=SimpleNamespace(stdout=json.dumps(tree).encode())) as query:
+            assert cut['focused']('/fixture/swaymsg') == [7, os.getpid()]
+            assert query.call_args.args[0] == ['/fixture/swaymsg', '-s', address, '-t', 'get_tree', '-r']
+        second.bind(str(Path(runtime) / f'sway-ipc.{os.getuid()}.456.sock'))
+        try:
+            cut['socket_path']()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('ambiguous compositor accepted')
+        Path(address).unlink()
+        Path(runtime, f'sway-ipc.{os.getuid()}.456.sock').unlink()
+        try:
+            cut['socket_path']()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('missing compositor accepted')
+    finally:
+        first.close()
+        second.close()
 with patch.dict(cut_globals, focused=lambda _: [7, 42]), \
         patch.object(sys, 'argv', ['cut', 'key-cut', 'swaymsg', 'key']), \
         patch.object(subprocess, 'run') as inject:
