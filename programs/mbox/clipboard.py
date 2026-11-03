@@ -134,16 +134,17 @@ def endpoint(target, action, data=None):
     return bounded(argv, env=env, data=data)
 
 
-def application_key(target, key):
+def application_key(target, key, cut_identity=None):
     if focused() != target:
         raise ClipboardFailure(FOCUS)
     if target[2] is not None:
-        if key == 'x':
-            raise ClipboardFailure(SESSION)
         # Do not relay wtype's temporary host keymap through Waypipe/nested Sway:
         # real guest GTK received Ctrl+Escape for Ctrl+C on that path. The host
         # selects a fixed action in its registered VM; no guest->host input API.
-        endpoint(target, 'key-copy' if key == 'c' else 'key-paste')
+        if key == 'x':
+            endpoint(target, 'key-cut', cut_identity)
+        else:
+            endpoint(target, 'key-copy' if key == 'c' else 'key-paste')
         if focused() != target:
             raise ClipboardFailure(FOCUS)
         return
@@ -163,7 +164,7 @@ def application_key(target, key):
 
 def require_cut_target(target):
     if target[2] is not None:
-        raise ClipboardFailure(SESSION)
+        return endpoint(target, 'check-cut')
     exe = Path(os.readlink(f'/proc/{target[1]}/exe')).name
     # Terminal selections aren't editable application selections. In particular
     # never send Readline's Ctrl+X prefix into a shell after copying scrollback.
@@ -290,8 +291,7 @@ def run(resources):
         # Explicit shell I/O does not infer authority from the focused window.
         # write always targets the host local clipboard, read only the buffer.
         target = None if action in ('write', 'read') else focused()
-        if action == 'cut':
-            require_cut_target(target)
+        cut_identity = require_cut_target(target) if action == 'cut' else None
         if action in ('export', 'copy', 'cut', 'write'):
             # Invalidate any earlier transfer even when the new export fails.
             buffer.unlink(missing_ok=True)
@@ -315,9 +315,11 @@ def run(resources):
                 # failed copy/store, changed focus, or changed clipboard payload.
                 if focused() != target:
                     raise ClipboardFailure(FOCUS)
+                if require_cut_target(target) != cut_identity:
+                    raise ClipboardFailure(FOCUS)
                 if text(endpoint(target, 'export')) != data:
                     raise RuntimeError('selection clipboard changed before Cut')
-                application_key(target, 'x')
+                application_key(target, 'x', cut_identity)
             print(f'mbox clipboard: text exported; expires in {TTL} seconds', file=sys.stderr)
         elif action in ('import', 'paste', 'read'):
             if not buffer.exists():
@@ -351,5 +353,12 @@ if __name__ == '__main__':
         main()
     except Exception as exc:
         # Never print guest output, payloads or arbitrary exception strings.
-        print('mbox clipboard: operation refused or failed; check focus, --clipboard, text size and expiry', file=sys.stderr)
+        reason = {
+            FOCUS: 'focus changed or no application is focused',
+            SESSION: 'sandbox session is unregistered, stale, or lacks --clipboard',
+            TEXT: 'text exceeds 1 MiB or is not valid UTF-8 without NUL',
+            EXPIRED: 'transfer buffer is empty or expired; copy text or pipe text to xi first',
+        }.get(exc.code if isinstance(exc, ClipboardFailure) else None,
+              'clipboard endpoint failed or timed out (Cut also requires an editable non-terminal selection)')
+        print('mbox clipboard: ' + reason, file=sys.stderr)
         sys.exit(exc.code if isinstance(exc, ClipboardFailure) else 1)

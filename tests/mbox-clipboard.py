@@ -15,6 +15,28 @@ spec = importlib.util.spec_from_file_location('broker', root/'programs/mbox/clip
 b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
+# The guest fixed-action endpoint checks identity supplied by the host before Cut.
+import io
+import runpy
+from types import SimpleNamespace
+cut = runpy.run_path(str(root/'programs/mbox/clipboard-guest-cut.py'))
+cut_globals = cut['main'].__globals__
+with patch.dict(cut_globals, focused=lambda _: [7, 42]), \
+        patch.object(sys, 'argv', ['cut', 'key-cut', 'swaymsg', 'key']), \
+        patch.object(subprocess, 'run') as inject:
+    with patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(b'[7,42]'))):
+        cut['main']()
+        inject.assert_called_once_with(['key', 'cut'], check=True, timeout=2)
+    inject.reset_mock()
+    with patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(b'[8,42]'))):
+        try:
+            cut['main']()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('changed guest focus accepted')
+    inject.assert_not_called()
+
 with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
     os.environ['XDG_RUNTIME_DIR'] = tmp
     os.environ['SWAYSOCK'] = '/fixture/sway.sock'
@@ -112,8 +134,8 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         with patch.object(sys, 'stdout', SimpleNamespace(buffer=output)):
             main('read')
         assert output.getvalue() == payload and (d/'buffer.json').exists()
-    # Copy/store must precede Cut. Reject terminals, guests, empty text and races.
-    def cut_key(target, key):
+    # Copy/store must precede Cut. Reject terminals, empty text and races.
+    def cut_key(target, key, identity):
         assert key == 'x'
         assert json.loads((d/'buffer.json').read_text())['text'] == 'fixture text'
     with patch.object(b, 'focused', return_value=host), \
@@ -122,7 +144,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
             patch.object(b, 'endpoint', side_effect=endpoint), \
             patch.object(b, 'application_key', side_effect=cut_key) as key, patch.object(subprocess, 'Popen'):
         main('cut')
-        key.assert_called_once_with(host, 'x')
+        key.assert_called_once_with(host, 'x', None)
         key.reset_mock()
         with patch.object(b, 'copy_selection', side_effect=RuntimeError('copy failed')):
             refused(lambda: main('cut'))
@@ -138,9 +160,18 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         key.assert_not_called()
         with patch.object(os, 'readlink', return_value='/nix/store/fixture/bin/foot'):
             refused(lambda: main('cut'))
-        with patch.object(b, 'focused', return_value=(1, host[1], {'enabled': True})):
-            category(21, lambda: main('cut'))
         key.assert_not_called()
+    guest = (1, host[1], {'enabled': True})
+    with patch.object(b, 'focused', return_value=guest), \
+            patch.object(b, 'copy_selection', return_value=b'fixture text'), \
+            patch.object(b, 'endpoint', side_effect=endpoint) as remote, \
+            patch.object(subprocess, 'Popen'):
+        main('cut')
+        assert [c.args[1] for c in remote.call_args_list] == ['check-cut', 'check-cut', 'export', 'key-cut']
+        with patch.object(b, 'require_cut_target', side_effect=[b'[1,2]', b'[3,4]']):
+            remote.reset_mock()
+            category(20, lambda: main('cut'))
+            assert not any(c.args[1] == 'key-cut' for c in remote.call_args_list)
     # A failed Copy cannot export the old buffer.
     with patch.object(b, 'focused', return_value=host), patch.object(b, 'endpoint', side_effect=endpoint), \
             patch.object(b, 'application_key', side_effect=RuntimeError('focus changed')):

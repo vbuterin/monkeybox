@@ -324,8 +324,9 @@ let
   };
 
   clipboardGuest = pkgs.writeShellScript "mbox-clipboard-guest" (builtins.replaceStrings
-    [ "@@WL_PASTE@@" "@@WL_COPY@@" "@@KEY@@" ]
-    [ "${pkgs.wl-clipboard}/bin/wl-paste" "${pkgs.wl-clipboard}/bin/wl-copy" "${clipboardKey}/bin/mbox-clipboard-key" ]
+    [ "@@WL_PASTE@@" "@@WL_COPY@@" "@@KEY@@" "@@PYTHON@@" "@@CUT@@" "@@SWAYMSG@@" ]
+    [ "${pkgs.wl-clipboard}/bin/wl-paste" "${pkgs.wl-clipboard}/bin/wl-copy" "${clipboardKey}/bin/mbox-clipboard-key"
+      "${pkgs.python3}/bin/python3" "${../../programs/mbox/clipboard-guest-cut.py}" "${pkgs.sway-unwrapped}/bin/swaymsg" ]
     (builtins.readFile ../../programs/mbox/clipboard-guest.sh.in));
 
   # Guest-only: preserve the parent's keymap and consume host IME commits.

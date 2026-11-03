@@ -6,6 +6,8 @@ case "$1" in
     # Only fixed host-authorized editing actions, on this VM's LOCAL compositor.
     key-copy) exec @@KEY@@ copy ;;
     key-paste) exec @@KEY@@ paste ;;
+    check-cut|key-cut)
+        exec @@PYTHON@@ -I @@CUT@@ "$1" @@SWAYMSG@@ @@KEY@@ ;;
     clear) exec @@WL_COPY@@ --clear >/dev/null 2>&1 ;;
     export) exec @@WL_PASTE@@ --no-newline --type text ;;
     import) exec @@WL_COPY@@ --type 'text/plain;charset=utf-8' >/dev/null 2>&1 ;;

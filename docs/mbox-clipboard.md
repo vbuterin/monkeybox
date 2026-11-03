@@ -39,17 +39,15 @@ Terminal-only invocations do not use this desktop lifecycle handler.
   local clipboard and transfer buffer, without inspecting window focus.
 - `mbox-clipboard read` prints the unexpired transfer buffer verbatim to stdout,
   without consuming it or appending a newline. Missing/expired text fails.
-- `mbox-clipboard cut` is host-only: copy the focused editable selection, publish
+- `mbox-clipboard cut`: copy the focused editable selection on the host or an
+  opted-in guest, publish
   the transfer buffer, recheck focus and clipboard bytes, then request Ctrl+X.
-  Failed copy/storage, empty text, changed focus/clipboard, guest windows and
-  recognized terminals are refused before Cut. It does not guarantee deletion:
+  Failed copy/storage, empty text, changed focus/clipboard and recognized
+  terminals are refused before Cut. Guest Cut checks the nested focused window
+  identity before copying and again immediately before injecting the key. It does not guarantee deletion:
   the application owns selection/editability and handles Ctrl+X. Selection changes
   within the same application cannot be checked atomically; don't change selection
   while the shortcut runs. Unrecognized terminal emulators may not be detected.
-
-The personal host config maps `xi` to `write`, `xom` to `read`, and binds
-Ctrl+Alt+X on release to `cut` (press is consumed). `xo` remains local wl-paste.
-These shell aliases are host-side; no new guest access to the broker is granted.
 
 Text only: UTF-8, no NUL, maximum 1 MiB, 300-second expiry. Paste preserves the
 transfer buffer for repeated explicit imports until expiry or clear. No
@@ -66,7 +64,8 @@ bindsym Ctrl+Shift+c nop
 bindsym --release Ctrl+Shift+c exec mbox-clipboard copy
 bindsym Ctrl+Shift+v nop
 bindsym --release Ctrl+Shift+v exec mbox-clipboard paste
-bindsym Ctrl+Shift+x exec mbox-clipboard clear
+bindsym Ctrl+Shift+x nop
+bindsym --release Ctrl+Shift+x exec mbox-clipboard cut
 ```
 
 For native host Foot, add to its configuration (merge existing key-bindings):
