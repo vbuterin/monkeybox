@@ -99,6 +99,48 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         main('paste')
         assert calls[-1][1:] == ('import', b'fixture text')
         assert (d/'buffer.json').exists()
+    # Shell I/O is explicit host clipboard access, independent of focus.
+    import io
+    from types import SimpleNamespace
+    payload = b'line one\nline two\n'
+    with patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(payload))), \
+            patch.object(b, 'focused', side_effect=AssertionError('must not inspect focus')), \
+            patch.object(b, 'endpoint') as local, patch.object(subprocess, 'Popen'):
+        main('write')
+        local.assert_called_once_with((None, None, None), 'import', payload)
+        output = io.BytesIO()
+        with patch.object(sys, 'stdout', SimpleNamespace(buffer=output)):
+            main('read')
+        assert output.getvalue() == payload and (d/'buffer.json').exists()
+    # Copy/store must precede Cut. Reject terminals, guests, empty text and races.
+    def cut_key(target, key):
+        assert key == 'x'
+        assert json.loads((d/'buffer.json').read_text())['text'] == 'fixture text'
+    with patch.object(b, 'focused', return_value=host), \
+            patch.object(os, 'readlink', return_value='/nix/store/fixture/bin/editor'), \
+            patch.object(b, 'copy_selection', return_value=b'fixture text'), \
+            patch.object(b, 'endpoint', side_effect=endpoint), \
+            patch.object(b, 'application_key', side_effect=cut_key) as key, patch.object(subprocess, 'Popen'):
+        main('cut')
+        key.assert_called_once_with(host, 'x')
+        key.reset_mock()
+        with patch.object(b, 'copy_selection', side_effect=RuntimeError('copy failed')):
+            refused(lambda: main('cut'))
+        key.assert_not_called()
+        with patch.object(b, 'copy_selection', return_value=b''):
+            refused(lambda: main('cut'))
+        key.assert_not_called()
+        with patch.object(b, 'endpoint', return_value=b'changed'):
+            refused(lambda: main('cut'))
+        key.assert_not_called()
+        with patch.object(b, 'focused', side_effect=[host, host, (2, host[1], None)]):
+            category(20, lambda: main('cut'))
+        key.assert_not_called()
+        with patch.object(os, 'readlink', return_value='/nix/store/fixture/bin/foot'):
+            refused(lambda: main('cut'))
+        with patch.object(b, 'focused', return_value=(1, host[1], {'enabled': True})):
+            category(21, lambda: main('cut'))
+        key.assert_not_called()
     # A failed Copy cannot export the old buffer.
     with patch.object(b, 'focused', return_value=host), patch.object(b, 'endpoint', side_effect=endpoint), \
             patch.object(b, 'application_key', side_effect=RuntimeError('focus changed')):
@@ -112,6 +154,10 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-policy-') as tmp:
         assert send.call_args.args[0] == ['@@KEY@@', 'copy-foot']
         b.application_key(host, 'v')
         assert send.call_args.args[0] == ['@@KEY@@', 'paste-foot']
+    with patch.object(b, 'focused', return_value=host), patch.object(b, 'bounded') as send, \
+            patch.object(os, 'readlink', return_value='/nix/store/fixture/bin/editor'):
+        b.application_key(host, 'x')
+        assert send.call_args.args[0] == ['@@KEY@@', 'cut']
     # Host GTK uses the same complete-keymap helper as guests. Do not regress
     # to wtype's tiny keymap (or its easily reversed modifier CLI flags).
     with patch.object(b, 'focused', return_value=host), patch.object(b, 'bounded') as send, \

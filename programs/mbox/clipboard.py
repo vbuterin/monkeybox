@@ -1,4 +1,5 @@
 """Host-only explicit text transfer. No socket or clipboard API exposed to guests."""
+from contextlib import ExitStack
 import fcntl
 import json
 import os
@@ -137,6 +138,8 @@ def application_key(target, key):
     if focused() != target:
         raise ClipboardFailure(FOCUS)
     if target[2] is not None:
+        if key == 'x':
+            raise ClipboardFailure(SESSION)
         # Do not relay wtype's temporary host keymap through Waypipe/nested Sway:
         # real guest GTK received Ctrl+Escape for Ctrl+C on that path. The host
         # selects a fixed action in its registered VM; no guest->host input API.
@@ -147,13 +150,27 @@ def application_key(target, key):
     # Use the same complete-keymap, fixed-action helper on both desktops.
     # wtype's per-command keymap is unsuitable for GTK editing shortcuts.
     exe = Path(os.readlink(f'/proc/{target[1]}/exe'))
-    action = 'copy' if key == 'c' else 'paste'
+    action = {'c': 'copy', 'v': 'paste', 'x': 'cut'}[key]
+    if key == 'x':
+        require_cut_target(target)
     if exe.name == 'foot' and str(exe).startswith('/nix/store/'):
         # Semantic keys avoid shell Ctrl+C and global Ctrl+Shift+C/V bindings.
         action += '-foot'
     bounded(['@@KEY@@', action])
     if focused() != target:
         raise ClipboardFailure(FOCUS)
+
+
+def require_cut_target(target):
+    if target[2] is not None:
+        raise ClipboardFailure(SESSION)
+    exe = Path(os.readlink(f'/proc/{target[1]}/exe')).name
+    # Terminal selections aren't editable application selections. In particular
+    # never send Readline's Ctrl+X prefix into a shell after copying scrollback.
+    if exe in {'foot', 'footclient', 'alacritty', 'kitty', 'wezterm-gui',
+               'gnome-terminal-server', 'konsole', 'xterm', 'rxvt', 'urxvt',
+               'st', 'terminator', 'xfce4-terminal', 'tilix', 'ghostty'}:
+        raise RuntimeError('cut is not supported in terminals')
 
 
 def copy_selection(target):
@@ -185,6 +202,11 @@ def text(data):
 
 
 def main():
+    with ExitStack() as resources:
+        return run(resources)
+
+
+def run(resources):
     os.umask(0o077)
     path = directory()
     action = sys.argv[1]
@@ -193,7 +215,7 @@ def main():
         event = path / 'activity.json'
         temp = path / ('activity-' + uuid.uuid4().hex)
         operation = sys.argv[2] if len(sys.argv) > 2 else 'copy'
-        if operation not in ('copy', 'export', 'paste', 'import', 'clear'):
+        if operation not in ('copy', 'export', 'paste', 'import', 'clear', 'cut', 'write'):
             raise RuntimeError('invalid activity')
         temp.write_text(json.dumps(dict(at=time.monotonic(), operation=operation)))
         temp.replace(event)
@@ -247,15 +269,14 @@ def main():
         return
     if action == 'expire':
         time.sleep(TTL)
-    if action in ('copy', 'export', 'paste', 'import', 'clear'):
+    if action in ('copy', 'export', 'paste', 'import', 'clear', 'cut', 'write'):
         # Nested helpers (binding echoes, double triggers) must not interleave:
         # a second clear would destroy the first helper's copied text mid-poll.
-        operation = (path / 'operation.lock').open('a')
+        operation = resources.enter_context((path / 'operation.lock').open('a'))
         try:
             fcntl.flock(operation, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print('mbox clipboard: another clipboard operation is already running')
-            return
+            raise RuntimeError('another clipboard operation is already running')
     with (path / 'lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         buffer = path / 'buffer.json'
@@ -266,21 +287,39 @@ def main():
         if action == 'clear':
             buffer.unlink(missing_ok=True)
             return
-        target = focused()
-        if action in ('export', 'copy'):
+        # Explicit shell I/O does not infer authority from the focused window.
+        # write always targets the host local clipboard, read only the buffer.
+        target = None if action in ('write', 'read') else focused()
+        if action == 'cut':
+            require_cut_target(target)
+        if action in ('export', 'copy', 'cut', 'write'):
             # Invalidate any earlier transfer even when the new export fails.
             buffer.unlink(missing_ok=True)
-            data = copy_selection(target) if action == 'copy' else text(endpoint(target, 'export'))
-            if focused() != target:
-                raise ClipboardFailure(FOCUS)
+            if action == 'write':
+                data = text(sys.stdin.buffer.read(LIMIT + 1))
+                endpoint((None, None, None), 'import', data)
+            else:
+                data = copy_selection(target) if action in ('copy', 'cut') else text(endpoint(target, 'export'))
+                if focused() != target:
+                    raise ClipboardFailure(FOCUS)
+                if action == 'cut' and not data:
+                    raise RuntimeError('refusing to cut an empty selection')
             ident = uuid.uuid4().hex
             buffer.write_text(json.dumps(dict(id=ident, expires=time.monotonic()+TTL,
                                              text=data.decode('utf-8'))))
             subprocess.Popen(['@@PYTHON@@', __file__, 'expire', ident],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)
-            print(f'mbox clipboard: text exported; expires in {TTL} seconds')
-        elif action in ('import', 'paste'):
+            if action == 'cut':
+                # Buffer is safely published first. Never delete following a
+                # failed copy/store, changed focus, or changed clipboard payload.
+                if focused() != target:
+                    raise ClipboardFailure(FOCUS)
+                if text(endpoint(target, 'export')) != data:
+                    raise RuntimeError('selection clipboard changed before Cut')
+                application_key(target, 'x')
+            print(f'mbox clipboard: text exported; expires in {TTL} seconds', file=sys.stderr)
+        elif action in ('import', 'paste', 'read'):
             if not buffer.exists():
                 raise ClipboardFailure(EXPIRED)
             record = json.loads(buffer.read_text())
@@ -292,6 +331,9 @@ def main():
             # it expires or an explicit clear removes it. Failed deliveries also
             # keep it, so the Paste can simply be retried on the right window.
             data = text(record['text'].encode('utf-8'))
+            if action == 'read':
+                sys.stdout.buffer.write(data)
+                return
             if focused() != target:
                 raise ClipboardFailure(FOCUS)
             endpoint(target, 'import', data)
@@ -301,7 +343,7 @@ def main():
             else:
                 print('mbox clipboard: text imported; use ordinary Ctrl+V')
         else:
-            raise RuntimeError('expected copy, paste, export, import or clear')
+            raise RuntimeError('expected copy, cut, paste, export, import, write, read or clear')
 
 
 if __name__ == '__main__':

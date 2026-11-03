@@ -453,9 +453,9 @@ let
     (builtins.readFile ../../programs/mbox/clipboard.py));
   clipboard = pkgs.writeShellScriptBin "mbox-clipboard" ''
     case "''${1:-}" in
-      copy|paste|export|import|clear)
+      copy|cut|paste|export|import|clear|write)
         if ${pkgs.python3}/bin/python3 ${clipboardSource} "$@"; then
-          ${pkgs.python3}/bin/python3 ${clipboardSource} pulse "$1"
+          ${pkgs.python3}/bin/python3 ${clipboardSource} pulse "$(case "$1" in cut|write) echo export ;; *) echo "$1" ;; esac)"
         else
           status=$?
           case "$status" in

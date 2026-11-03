@@ -35,6 +35,21 @@ Terminal-only invocations do not use this desktop lifecycle handler.
 - Copy locally, then `mbox-clipboard export` while the source remains focused.
 - Focus the destination, `mbox-clipboard import`, then paste locally.
 - `mbox-clipboard clear` discards the transfer buffer, **not Cut**.
+- `printf 'text' | mbox-clipboard write` explicitly writes stdin to both the host
+  local clipboard and transfer buffer, without inspecting window focus.
+- `mbox-clipboard read` prints the unexpired transfer buffer verbatim to stdout,
+  without consuming it or appending a newline. Missing/expired text fails.
+- `mbox-clipboard cut` is host-only: copy the focused editable selection, publish
+  the transfer buffer, recheck focus and clipboard bytes, then request Ctrl+X.
+  Failed copy/storage, empty text, changed focus/clipboard, guest windows and
+  recognized terminals are refused before Cut. It does not guarantee deletion:
+  the application owns selection/editability and handles Ctrl+X. Selection changes
+  within the same application cannot be checked atomically; don't change selection
+  while the shortcut runs. Unrecognized terminal emulators may not be detected.
+
+The personal host config maps `xi` to `write`, `xom` to `read`, and binds
+Ctrl+Alt+X on release to `cut` (press is consumed). `xo` remains local wl-paste.
+These shell aliases are host-side; no new guest access to the broker is granted.
 
 Text only: UTF-8, no NUL, maximum 1 MiB, 300-second expiry. Paste preserves the
 transfer buffer for repeated explicit imports until expiry or clear. No
