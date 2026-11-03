@@ -2,9 +2,13 @@
 
 ## Application profiles and host resources
 
+`python3 tests/mbox-app-policy.py` tests the real parser/re-exec, compact rules,
+profile IDs, app homes, named abbreviations, private flock contention/release,
+explicit migration and temporary-home creation/cleanup. No live apps or VMs.
+
 `python3 tests/mbox-resources.py` uses a private HOME and synthetic fontconfig
 output. Tests concurrent/atomic first-use `.mboxrc` creation, no overwrite of
-files or dangling symlinks, strict TOML validation, program-specific grants,
+files or dangling symlinks, strict compact-rule/legacy TOML validation, program-specific grants,
 CLI override/command boundaries, read-only symlink destinations and collisions,
 sh/bash/zsh/fish RC selection, and visual-only font copying. Full launcher dry-runs
 use a private Unix socket without touching live input, profiles or VM state.

@@ -98,20 +98,36 @@ and still lets the guest reach a host one.
 
 ## Per-application defaults and shell startup files
 
-On the first normal launch, Monkeybox silently installs its commented TOML
+On the first normal launch, Monkeybox silently installs its commented
 [template](programs/mbox/default.mboxrc) as `~/.mboxrc` (mode 0600). Creation is
 atomic and never replaces an existing file or symlink. Upgrades never overwrite
 user edits. `--no-config`, `--config FILE`, help and management commands do not
 create it. The file is data, never sourced as shell code.
 
-```toml
-version = 1
-[programs.my-browser]
-flags = ["-vaic", "-m", "4096"]
-project = "home" # private guest HOME, not a grant of host HOME
-read_write = ["~/Downloads"]
-read_only = ["~/reference"]
+```text
+firefox:  -dvaicx -m 8192 --optional-file ~/Downloads ~/Screenshots
+evince:   -vc --no-internet -m 2048
+gimp:     -vc --no-internet -m 4096
+--online: -b --host-loopback -p 8000 -p 8012 -p 8080 -p 8545 --network open
 ```
+
+One `name: flags` entry per line. Quotes and `#` comments work; commands, globs,
+backticks and shell substitutions are **not** evaluated. `~`, `${HOME}` and
+`${XDG_CONFIG_HOME}`, `${XDG_CACHE_HOME}`, `${XDG_STATE_HOME}` expand explicitly.
+`-f PATH...` requires existing writable resources; `--optional-file PATH...`
+skips absent writable resources; `--read-only PATH...` skips absent read-only
+resources. These list forms are configuration syntax (CLI `--read-only` takes
+one path). Use `--` to append default **application arguments**, for example:
+`mplayer: -a --no-visual --no-internet -- -novideo`. User application arguments
+follow those defaults. `--warn "text"` prints an informational warning.
+
+Names beginning with `--` define abbreviations: `mbox --online` starts the normal
+project shell; `mbox --online pi` runs Pi. They are recognized only before the
+command, cannot shadow built-in options, recurse, or select an implicit command.
+Precedence is application defaults, then abbreviations, then explicit CLI flags.
+An abbreviation specifying host ports replaces the application's default host-port
+list, so an offline abbreviation does not retain online-only ports. Explicit CLI
+port grants remain additive. Existing version-1 TOML configurations remain readable.
 
 Profiles match the executable basename, not application arguments or commands
 inside `sh -c`. Missing optional resource paths are skipped. A supplied config
@@ -126,8 +142,46 @@ Shipped profiles separate browser Downloads access from agent resources. No
 live Signal profile is automatically shared. The Pi profile shares selected
 model/skill/MCP configuration only; it does not grant server access. Other
 harnesses can be configured identically without launcher changes. Profiles do not
-install applications. Existing per-project home/state semantics are unchanged;
-use `MBOX_STATE_ROOT` or separate projects for separate persistent app homes.
+install applications.
+
+### Home modes and exclusive use
+
+- Default: share the project directory read-write, with a persistent project home.
+- `-d` / `--app-home`: do **not** share cwd; start at a private persistent HOME,
+  keyed by a versioned hash of command basename and profile ID. Nix-store upgrades
+  do not change this key. `--profile ID` requires `-d`; default ID is empty.
+  Interpreter commands such as `python script.py` need explicit profile IDs if
+  their state should be separated. An explicit project directory selects project
+  mode instead of an application's `-d` default.
+- `-e` / `--ephemeral`: fresh mode-0700 host directory under `/tmp`, mounted at
+  guest HOME and removed on normal exit, launch failure or handled termination.
+  It still shares the project directory and honors explicit persistence/grants.
+  It is incompatible with `-d`, including `-d` supplied by a profile. Use
+  `--no-config -e ...` to bypass such defaults. SIGKILL/host crashes may leave the
+  temporary directory behind. This is cleanup, not secure erasure.
+
+**CLI change:** `-e` no longer passes environment variables; use `--env NAME=value`.
+
+`-x` / `--exclusive` refuses simultaneous cooperating launches using the same home.
+`--exclusive-path PATH` additionally locks a canonical shared host resource across
+profiles and state roots. Locks are outside guest mounts, acquired before VM boot,
+held by the launcher/children, and released on process exit; duplicate requests
+are deduplicated. Lock files remain intentionally. These advisory locks do not
+stop host applications or Monkeybox launches omitting the lock flag.
+
+App homes live below `$MBOX_STATE_ROOT/apps/<hash>/home` (default state root:
+`~/.local/state/mbox`); VM image caches remain shared. To reuse an old helper home,
+stop **all** instances using it, then run e.g.:
+
+```sh
+mbox --migrate-home ~/.local/state/mbox-apps/firefox/projects"$HOME"/home firefox
+```
+
+This copies into an absent app home without deleting the original. Never copy a
+live database. A profile's `--previous-home PATH` guards against silently opening
+a blank default app home when a legacy home exists; it does not migrate by itself.
+Old project-mode helper homes remain untouched; explicitly copy wanted settings
+into the normal project home after stopping the old applications.
 
 `-b` propagates existing `.profile`, `.shrc`, Bash startup files, zsh startup files
 (from `ZDOTDIR` when set), and fish `config.fish`, `conf.d`, `functions` and
@@ -137,7 +191,7 @@ directories are not shared. Symlinks resolve on the host while retaining guest
 startup-file destinations. RC code runs in the guest and can contain secrets:
 review it before granting access. External files/plugins it sources are not
 implicitly granted. POSIX shells do not agree on interactive RC behavior; `.shrc`
-may require explicit `-e ENV=...`. `-b` does not install/select a shell: e.g.
+may require explicit `--env ENV=...`. `-b` does not install/select a shell: e.g.
 `mbox -b -- zsh -i` requires zsh to be available. The default interactive shell
 remains Bash. The old `programs.mbox.bashrc` option is removed; use `-b` or an
 explicit `--read-only` grant instead.

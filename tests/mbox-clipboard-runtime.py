@@ -145,8 +145,8 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-test-') as tmp:
             shutil.copyfile(Path(__file__).with_name('mbox-gtk-clipboard-app.py'), root/'project/entry.py')
             entry_log = (root/'entry.log').open('w')
             entry_app = subprocess.Popen([msb, 'exec', vm, '--no-tty', '--quiet', '--timeout', '300s',
-                '-e', 'XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime',
-                '-e', 'WAYLAND_DISPLAY=mbox-clipboard', '-e', 'GDK_BACKEND=wayland', '--',
+                '--env', 'XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime',
+                '--env', 'WAYLAND_DISPLAY=mbox-clipboard', '--env', 'GDK_BACKEND=wayland', '--',
                 'python3', str(root/'project/entry.py'), gtk, str(root/'project')],
                 env=env, stdout=entry_log, stderr=entry_log)
             deadline = time.monotonic()+150
@@ -226,8 +226,8 @@ with tempfile.TemporaryDirectory(prefix='mbox-clipboard-test-') as tmp:
                  'assert g.gdk_display_get_default_seat(g.gdk_display_get_default()); '
                  'print("NESTED_GTK_SEAT_OK")')
         result = run([msb, 'exec', vm, '--no-tty', '--quiet', '--timeout', '150s',
-                      '-e', 'XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime',
-                      '-e', 'WAYLAND_DISPLAY=mbox-clipboard', '-e', 'GDK_BACKEND=wayland',
+                      '--env', 'XDG_RUNTIME_DIR=/tmp/mbox-clipboard-runtime',
+                      '--env', 'WAYLAND_DISPLAY=mbox-clipboard', '--env', 'GDK_BACKEND=wayland',
                       '--', 'python3', '-c', probe], timeout=165)
         assert b'NESTED_GTK_SEAT_OK' in result.stdout, result.stdout
         print(result.stdout.decode().strip(), flush=True)

@@ -605,7 +605,7 @@ let
       "${cameraHost}"
       "${cameraGuest}"
       "${fontMounts}"
-      "${../../programs/mbox/resources.py}"
+      "${../../programs/mbox}/resources.py"
       "${../../programs/mbox/default.mboxrc}"
       "${pkgs.fontconfig.bin}/bin/fc-list"
       cfg.image

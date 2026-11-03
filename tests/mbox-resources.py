@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-resources-') as tmp:
         assert not config.exists() and result.split(b'\0')[0] == b'0'
         result = subprocess.check_output([str(launcher), '--no-visual', '-b', '--no-shell-rc', '--', 'firefox', '--app-option'])
         values = result.split(b'\0')
-        assert values[:5] == [b'0', b'0', os.fsencode(home), b'firefox', b'--app-option'], values
+        assert values[:5] == [b'0', b'0', b'', b'firefox', b'--app-option'], values
         assert config.exists() and os.fsencode(home / 'Downloads') in values
         result = subprocess.check_output([str(launcher), str(home / 'Downloads'), '--', 'firefox'])
         assert result.split(b'\0')[2] == os.fsencode(home / 'Downloads')
@@ -150,10 +150,23 @@ with tempfile.TemporaryDirectory(prefix='mbox-resources-') as tmp:
             assert f'{backing}:{home}/.bashrc:ro' in result.stdout
             assert '.pi/agent' not in result.stdout and '.agents/skills' not in result.stdout
             assert config.exists()
+            import runpy
+            app_key = runpy.run_path(str(root / 'programs/mbox/profiles.py'))['app_key']
+            assert str(home / 'state/apps' / app_key('firefox', '') / 'home') in result.stdout
             result = subprocess.run([str(launcher), '--dry-run', '--no-visual', '--no-audio', '--', 'firefox'],
                                     env=environment, capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, result.stderr
             assert '/usr/share/mbox-host-fonts' not in result.stdout
+            # App-home never exposes the invoking project; explicit grants stay.
+            project = home / 'secret-project'; project.mkdir()
+            result = subprocess.run([str(launcher), '--dry-run', '--no-visual', '--no-audio', '--', 'firefox'],
+                                    cwd=project, env=environment, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            assert str(project) not in result.stdout
+            result = subprocess.run([str(launcher), '--no-config', '-e', '--dry-run', '--', 'true'],
+                                    cwd=project, env=environment, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            assert '/tmp/mbox-home.DRY-RUN:' in result.stdout and str(project) in result.stdout
         finally:
             private_socket.close()
 print('PASS: atomic config, scoped profiles/overrides, RC/RO mounts, visual fonts, full launcher dry-runs')

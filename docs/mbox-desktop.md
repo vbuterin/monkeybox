@@ -88,7 +88,7 @@ PID. No host pointer position or host desktop queries are used.
 
 Only the configured `seat0` publishes the shared geometry record; an unfocused
 auxiliary seat cannot overwrite it. For intermittent fallback diagnosis, pass
-`-e MBOX_CARET_DEBUG=1` to **mbox** (before `--`, not as an application argument).
+`--env MBOX_CARET_DEBUG=1` to **mbox** (before `--`, not as an application argument).
 It logs transition reasons (`no-keyboard-focus`, `surface-not-in-scene`,
 `no-enabled-caret`, `invalid-or-off-output-caret`, `output-not-entered`, or invalid
 record) without logging surrounding text or message contents. These diagnostics

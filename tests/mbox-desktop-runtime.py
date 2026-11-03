@@ -213,7 +213,7 @@ with tempfile.TemporaryDirectory(prefix="mbox-runtime-") as tmp:
             b'\x89PNG\r\n\x1a\n' + png_chunk(b'IHDR', struct.pack('>IIBBBBB', 16, 16, 8, 2, 0, 0, 0))
             + png_chunk(b'IDAT', zlib.compress((b'\0' + b'\xff\x40\x20' * 16) * 16))
             + png_chunk(b'IEND', b''))
-        x11 = run(['-v', '-e', 'WAYLAND_DEBUG=1'], '''set -e
+        x11 = run(['-v', '--env', 'WAYLAND_DEBUG=1'], '''set -e
             test -n "$DISPLAY"
             feh --title MBOX_FEH_FIXTURE fixture.png &
             viewer=$!

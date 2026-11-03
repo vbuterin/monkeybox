@@ -12,8 +12,14 @@ This is an experimental implementation, not an independent security audit.
   their contents. Do not grant broad home directories or sensitive projects.
 - `/nix/store` is exposed read-only, not the host Nix daemon. Never place secrets
   in Nix derivations. Store visibility is broader than the selected guest PATH.
-- Private homes persist per project; persistence does not make guest files safe
+- Private homes persist per project, or per command basename/profile with `-d`.
+  App-home mode does not grant cwd. Persistence does not make guest files safe
   to execute on the host. Rollbacks do not undo guest state migrations/writes.
+  `-e` uses a private temporary host directory; cleanup is not secure erasure,
+  and SIGKILL/crashes can leave it behind. Explicit shared/persisted paths survive.
+- `-x` and `--exclusive-path` are advisory host locks for cooperating Monkeybox
+  launches, not guest isolation or protection against host application writers.
+  Stop all database writers before migrating or sharing a live profile.
 - The bare launcher blocks networking, but application profiles in `~/.mboxrc`
   can grant egress and mounts. The shipped browser/agent profiles enable internet.
   First normal launch creates this file without overwriting existing entries.

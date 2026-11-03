@@ -61,7 +61,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-camera-synthetic-') as tmp:
         (root/'project/browser.py').write_bytes((root_repo/'tests/mbox-camera-browser.py').read_bytes())
         guest_command = [helper,python,'browser.py',firefox]
     try:
-        result = subprocess.run([wrapper,str(root/'project'),'--memory','4G','--network','blocked','-e','MBOX_CAMERA_BRIDGE='+str(int(bridge)),'-e','MBOX_CAMERA_TRACE='+os.environ.get('MBOX_CAMERA_TRACE','0'),'--',*guest_command],
+        result = subprocess.run([wrapper,str(root/'project'),'--memory','4G','--network','blocked','--env','MBOX_CAMERA_BRIDGE='+str(int(bridge)),'--env','MBOX_CAMERA_TRACE='+os.environ.get('MBOX_CAMERA_TRACE','0'),'--',*guest_command],
                             env=env,stdin=subprocess.DEVNULL,capture_output=True,timeout=300)
     finally:
         stop.set()

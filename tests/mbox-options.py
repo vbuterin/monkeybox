@@ -75,7 +75,7 @@ for flag in ('-c', '--clipboard', '-avc'):
 # Unknown/value-taking clusters are not partially interpreted.
 for flag in ('-avz', '-w', '--wayland', '--volume'):
     result = subprocess.run(['bash', '-eu', '-c', 'usage() { :; };\n' + cluster_parser,
-                             'test', flag], capture_output=True)
+                             'test', '--no-config', flag], capture_output=True)
     assert result.returncode == 2 and b'unknown option' in result.stderr
 file_parser = parser + '\nprintf "FILE=%s\\0" "${EXTRA_MOUNTS[@]}"'
 for flag in ('-af', '-avf', '-viclaf'):
@@ -96,7 +96,7 @@ for args, expected in [(['-avicl'], b'CAMERA=1:/dev/video0'),
     assert subprocess.check_output(['bash','-eu','-c',camera_parser,'test',*args]).endswith(expected)
 # All value-taking short options may END a cluster, never occur inside one.
 variables = {'p': 'ALLOW[@]', 'n': 'NET_MODE', 'P': 'EXTRA_PERSIST[@]',
-             'f': 'EXTRA_MOUNTS[@]', 'e': 'EXTRA_ENV[@]', 'C': 'NIX_CACHE_PATHS[@]', 'm': 'MEMORY'}
+             'f': 'EXTRA_MOUNTS[@]', 'C': 'NIX_CACHE_PATHS[@]', 'm': 'MEMORY'}
 for letter, variable in variables.items():
     probe = parser + '\nprintf "VALUE=%s" "${' + variable + '}"'
     for prefix in ('a', 'iv', 'aail'):

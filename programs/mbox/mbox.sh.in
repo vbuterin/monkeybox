@@ -109,11 +109,16 @@ Options:
                            publishing; blocked mode still blocks egress.
       --host-loopback      Relay explicitly granted host ports onto guest 127.0.0.1
   -v, --visual             Wayland/Xwayland bridge and automatic host/package font discovery
+  -d, --app-home           Private home keyed by command + profile; do not share cwd
+      --profile ID        Select an app-home profile (requires -d)
+  -x, --exclusive          Refuse concurrent use of this persistent home
+      --exclusive-path PATH  Also lock a shared host resource (repeatable)
+      --migrate-home PATH Copy an old private home once into a new app home
   -b, --shell-rc           Share existing sh/bash/zsh/fish startup files read-only
       --no-shell-rc        Do not propagate host startup files (default)
       --read-only PATH    Share a file/directory read-only at its host path (repeatable)
       --read-write PATH   Single-path equivalent of --file (useful in profiles)
-      --config FILE       Use this TOML application defaults file instead of ~/.mboxrc
+      --config FILE       Use this application defaults file instead of ~/.mboxrc
       --no-config         Bypass user and shipped application defaults
       --project PATH      Explicit project directory (overrides a profile's home default)
       --no-clipboard      Disable a profile's clipboard default
@@ -133,7 +138,7 @@ Options:
                            host paths, read-write (repeatable); no copy/private persistence.
                            Consumes paths until the next option or --. Use -- before COMMAND.
                            Shell globs work; write ./-name for paths beginning with a dash.
-  -e, --env VAR[=VALUE]    Pass an environment variable (repeatable)
+      --env VAR[=VALUE]   Pass an environment variable (repeatable)
       --image IMAGE        Override the base image for this sandbox
       --cpus N             vCPU limit
   -m, --memory SIZE        Memory limit, e.g. 4096M
@@ -141,7 +146,7 @@ Options:
       --swap-mib N        Size used with -s, in MiB (64..65536; default 8192).
                           Setting a size alone does NOT enable swap.
                           Without -s, always use the baseline release firmware.
-      --ephemeral          Back the home with tmpfs: everything in it is discarded
+  -e, --ephemeral          Fresh private home under /tmp, deleted on exit; incompatible with -d
       --fresh              Compatibility flag: every invocation boots a new sandbox
       --dry-run            Print the msb invocation instead of running it
   -h, --help               This text
@@ -183,9 +188,17 @@ USE_CONFIG=1
 CONFIG_FILE="${HOME}/.mboxrc"
 CONFIG_EXPLICIT=0
 SHELL_RC=0
+APP_HOME=0
+PROFILE_ID=""
+PROFILE_SET=0
+EXCLUSIVE=0
+MIGRATE_HOME=""
+EXCLUSIVE_PATHS=()
+UNKNOWN_OPTIONS=()
 SWAP_ENABLED=0
 FRESH=0
 EPHEMERAL=0
+EPHEMERAL_HOME=""
 CLIPBOARD=0
 DESKTOP_LAYOUT=side-by-side
 DESKTOP_LAYOUT_SET=0
@@ -213,8 +226,8 @@ while [ $# -gt 0 ]; do
         for ((i=0; i<${#cluster}; i++)); do
             letter="${cluster:i:1}"
             case "$letter" in
-                a|r|v|i|c|l|s|b|h) ;;
-                p|n|P|f|e|C|m)
+                a|r|v|i|c|l|s|b|d|x|e|h) ;;
+                p|n|P|f|C|m)
                     if [ "$i" -ne "$((${#cluster}-1))" ]; then
                         echo "mbox: -$letter takes arguments and must be last in '$1'" >&2
                         exit 2
@@ -227,7 +240,7 @@ while [ $# -gt 0 ]; do
         set -- "${cluster_args[@]}" "$@"
     fi
     case "$1" in
-        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|-e|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache|--desktop-layout|--read-only|--read-write|--config|--project)
+        -p|--allow-port|--expose-port|-n|--network|-P|--persist|-f|--file|--camera-device|--env|--image|--cpus|-m|--memory|--swap-mib|-C|--nix-cache|--desktop-layout|--read-only|--read-write|--config|--project|--profile|--exclusive-path|--migrate-home)
             if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" = -* ]]; then
                 echo "mbox: $1 requires a value (see mbox --help)" >&2
                 exit 2
@@ -243,7 +256,12 @@ while [ $# -gt 0 ]; do
         -P | --persist) EXTRA_PERSIST+=("$2"); shift 2 ;;
         --read-only) EXTRA_RO_MOUNTS+=("$2"); shift 2 ;;
         --read-write) EXTRA_MOUNTS+=("$2"); shift 2 ;;
-        --project) PROJECT_DIR="$2"; shift 2 ;;
+        --project) PROJECT_DIR="$2"; APP_HOME=0; shift 2 ;;
+        -d | --app-home) APP_HOME=1; shift ;;
+        --profile) PROFILE_ID="$2"; PROFILE_SET=1; shift 2 ;;
+        -x | --exclusive) EXCLUSIVE=1; shift ;;
+        --exclusive-path) EXCLUSIVE_PATHS+=("$2"); shift 2 ;;
+        --migrate-home) MIGRATE_HOME="$2"; shift 2 ;;
         --config) CONFIG_FILE="$2"; CONFIG_EXPLICIT=1; shift 2 ;;
         --no-config) USE_CONFIG=0; shift ;;
         -b | --shell-rc) SHELL_RC=1; shift ;;
@@ -259,7 +277,7 @@ while [ $# -gt 0 ]; do
                 shift
             done
             [ "$file_count" -gt 0 ] || { echo 'mbox: --file requires at least one path' >&2; exit 2; } ;;
-        -e | --env) EXTRA_ENV+=("$2"); shift 2 ;;
+        --env) EXTRA_ENV+=("$2"); shift 2 ;;
         -C | --nix-cache)
             if [ $# -lt 2 ] || [ -z "$2" ]; then
                 echo 'mbox: --nix-cache requires an existing store output path' >&2
@@ -300,9 +318,15 @@ while [ $# -gt 0 ]; do
         --no-internet) NET_MODE=blocked; shift ;;
         --no-audio) AUDIO=0; shift ;;
         --no-microphone) MICROPHONE=0; shift ;;
-        --ephemeral) EPHEMERAL=1; shift ;;
+        -e | --ephemeral) EPHEMERAL=1; shift ;;
         --fresh) FRESH=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --*)
+            # User abbreviations are resolved only after the real command boundary.
+            # Unknown names still fail on the no-config reparse.
+            if [ "$USE_CONFIG" = 1 ]; then UNKNOWN_OPTIONS+=("$1"); shift; continue; fi
+            echo "mbox: unknown option '$1'" >&2
+            exit 2 ;;
         -*)
             echo "mbox: unknown option '$1'" >&2
             usage >&2
@@ -311,6 +335,7 @@ while [ $# -gt 0 ]; do
         *)
             if [ "$PROJECT_POSITIONAL_SET" = 0 ] && [ -d "$1" ]; then
                 PROJECT_DIR="$1"
+                APP_HOME=0
                 PROJECT_POSITIONAL_SET=1
                 shift
             else
@@ -321,6 +346,10 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+if [ "$USE_CONFIG" = 0 ] && [ ${#UNKNOWN_OPTIONS[@]} -gt 0 ]; then
+    echo "mbox: unknown option '${UNKNOWN_OPTIONS[0]}'" >&2; exit 2
+fi
 
 # Refuse to nest. Inside the guest, MBOX_SANDBOX is set, and a nested launch
 # would try to start a VM inside a VM with no /dev/kvm.
@@ -336,14 +365,27 @@ if [ "$USE_CONFIG" = 1 ]; then
         @@PYTHON@@ -I "@@RESOURCES@@" init "$CONFIG_FILE" "@@DEFAULT_CONFIG@@"
     fi
     profile_args=$(mktemp)
-    if ! @@PYTHON@@ -I "@@RESOURCES@@" profile "$CONFIG_FILE" "${CMD[0]:-}" "$PROJECT_DIR" > "$profile_args"; then
+    if ! @@PYTHON@@ -I "@@RESOURCES@@" prepare -- "$CONFIG_FILE" "$PROJECT_DIR" "${#CMD[@]}" "$CMD_TAKEN" "${ORIGINAL_ARGS[@]}" > "$profile_args"; then
         rm -f -- "$profile_args"
         exit 2
     fi
     defaults=()
     mapfile -d '' -t defaults < "$profile_args"
     rm -f -- "$profile_args"
-    exec "$0" --no-config "${defaults[@]}" "${ORIGINAL_ARGS[@]}"
+    exec "$0" --no-config "${defaults[@]}"
+fi
+
+if [ "$EPHEMERAL" = 1 ] && [ "$APP_HOME" = 1 ]; then
+    echo 'mbox: --ephemeral (-e) is incompatible with --app-home (-d)' >&2; exit 2
+fi
+if [ "$PROFILE_SET" = 1 ] && [ "$APP_HOME" != 1 ]; then
+    echo 'mbox: --profile requires --app-home (-d)' >&2; exit 2
+fi
+if [ "$APP_HOME" = 1 ] && { [ -n "$PROJECT_DIR" ] || [ ${#CMD[@]} -eq 0 ]; }; then
+    echo 'mbox: --app-home requires a command and cannot select a project directory' >&2; exit 2
+fi
+if [ -n "$MIGRATE_HOME" ] && { [ "$APP_HOME" != 1 ] || [ "$EPHEMERAL" = 1 ]; }; then
+    echo 'mbox: --migrate-home requires a persistent app home' >&2; exit 2
 fi
 
 if [ "$DESKTOP_LAYOUT_SET" = 1 ] && { [ "$CLIPBOARD" != 1 ] || [ "$WAYLAND" != 1 ]; }; then
@@ -372,7 +414,55 @@ PROJECT="$(realpath -m -- "${PROJECT_DIR:-$PWD}")"
 read -r INVOCATION_ID < /proc/sys/kernel/random/uuid
 SANDBOX="mbox-$(printf '%s' "$PROJECT" | sha256sum | cut -c1-12)-$INVOCATION_ID"
 PROJECT_STATE="$STATE_ROOT/projects$PROJECT"
+if [ "$APP_HOME" = 1 ]; then
+    APP_KEY=$( @@PYTHON@@ -I "@@RESOURCES@@" app-key -- "${CMD[0]}" "$PROFILE_ID" | tr -d '\000' )
+    PROJECT="$GUEST_HOME"
+    PROJECT_STATE="$STATE_ROOT/apps/$APP_KEY"
+    SANDBOX="mbox-${APP_KEY:0:12}-$INVOCATION_ID"
+fi
 PERSIST_ROOT="$PROJECT_STATE/persist"
+
+# Locks are host-side, outside every guest home. Do not unlink lock files: that
+# would allow two different inodes to represent the same locked resource.
+LOCK_FDS=()
+LOCK_KEYS=()
+lock_resource() {
+    local key fd
+    key=$( @@PYTHON@@ -I "@@RESOURCES@@" lock-key -- "$1" | tr -d '\000' )
+    local existing
+    for existing in "${LOCK_KEYS[@]}"; do [ "$existing" != "$key" ] || return 0; done
+    LOCK_KEYS+=("$key")
+    local lock_root="${XDG_STATE_HOME:-$HOME/.local/state}/mbox-locks"
+    mkdir -p -m 700 "$lock_root"
+    exec {fd}>>"$lock_root/$key.lock"
+    if ! flock -n "$fd"; then
+        echo "mbox: resource already in use by another Monkeybox launch: $1" >&2
+        exit 2
+    fi
+    LOCK_FDS+=("$fd")
+}
+if [ "$DRY_RUN" != 1 ]; then
+    # Migration always locks the destination, even without -x.
+    if [ "$EXCLUSIVE" = 1 ] || [ -n "$MIGRATE_HOME" ]; then
+        lock_resource "$PROJECT_STATE/home"
+    fi
+    for resource in "${EXCLUSIVE_PATHS[@]}"; do
+        [ -e "$resource" ] || { echo "mbox: exclusive path does not exist: $resource" >&2; exit 2; }
+        lock_resource "$resource"
+    done
+    if [ -n "$MIGRATE_HOME" ]; then
+        [ -d "$MIGRATE_HOME" ] && [ ! -e "$PROJECT_STATE/home" ] || {
+            echo 'mbox: migration needs an existing source and an absent destination home' >&2; exit 2;
+        }
+        mkdir -p "$PROJECT_STATE"
+        migration=$(mktemp -d "$PROJECT_STATE/.migration.XXXXXXXX")
+        if ! cp -a "$MIGRATE_HOME/." "$migration/"; then
+            echo "mbox: migration failed; partial copy retained at $migration" >&2; exit 2
+        fi
+        mv -T "$migration" "$PROJECT_STATE/home"
+        echo "mbox: copied old home; original preserved at $MIGRATE_HOME" >&2
+    fi
+fi
 
 # Runs msb, or prints the invocation. Every decision below is visible through
 # --dry-run, which is how the module is tested without KVM.
@@ -459,6 +549,9 @@ cleanup_desktop() {
     [ -z "$DESKTOP_RUNTIME" ] || rm -rf -- "$DESKTOP_RUNTIME"
 }
 cleanup_nix_cache() {
+    if [ -n "$EPHEMERAL_HOME" ] && [ "$EPHEMERAL_HOME" != /tmp/mbox-home.DRY-RUN ]; then
+        rm -rf -- "$EPHEMERAL_HOME"
+    fi
     [ -z "$RESOURCE_ARGS" ] || rm -f -- "$RESOURCE_ARGS"
     [ -z "$FONT_RUNTIME" ] || rm -rf -- "$FONT_RUNTIME"
     if [ -n "$NIX_CACHE_DIR" ] && [ "$NIX_CACHE_DIR" != /tmp/mbox-nix-cache.DRY-RUN ]; then
@@ -533,10 +626,15 @@ if [ "$PROJECT" != "$(realpath -m -- "$GUEST_HOME")" ]; then
     MOUNTS+=(--mount-dir "$PROJECT:$PROJECT:rw,nodev,nosuid,uid=$MBOX_UID,gid=$MBOX_GID")
 fi
 
-# Home: one directory per project, kept between runs. With --ephemeral it is a
-# tmpfs instead and whatever the session wrote is gone.
+# Ephemeral uses a unique host directory, mounted only at guest HOME. It is
+# never the host's entire /tmp and does not replace or delete persistent state.
 if [ "$EPHEMERAL" = 1 ]; then
-    HOME_MOUNT=(--tmpfs "$GUEST_HOME:512M")
+    if [ "$DRY_RUN" = 1 ]; then
+        EPHEMERAL_HOME=/tmp/mbox-home.DRY-RUN
+    else
+        EPHEMERAL_HOME=$(mktemp -d /tmp/mbox-home.XXXXXXXX)
+    fi
+    HOME_MOUNT=(--mount-dir "$EPHEMERAL_HOME:$GUEST_HOME:rw,uid=$MBOX_UID,gid=$MBOX_GID")
 else
     HOME_BACKING="$PROJECT_STATE/home"
     mkdir -p "$HOME_BACKING"

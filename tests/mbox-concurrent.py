@@ -31,7 +31,7 @@ print(root, flush=True)
 project = root/'project'
 project.mkdir()
 env = dict(os.environ, PROJECT_DIR=str(project), STATE_ROOT=str(root/'state'))
-command = ['bash', '-eu', '-c', fragment + '\nprintf "%s\\n" "$SANDBOX" "$PROJECT_STATE" "$PERSIST_ROOT"']
+command = ['bash', '-eu', '-c', 'APP_HOME=0; DRY_RUN=1\n' + fragment + '\nprintf "%s\\n" "$SANDBOX" "$PROJECT_STATE" "$PERSIST_ROOT"']
 a = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, text=True)
 b = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, text=True)
 first = a.communicate(timeout=10)[0].splitlines()

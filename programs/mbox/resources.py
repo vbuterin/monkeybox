@@ -11,6 +11,10 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import runpy
+
+# Resolve explicitly: the installed helper runs with Python isolated mode (-I).
+policy = runpy.run_path(str(Path(__file__).with_name('profiles.py')))
 
 
 def emit(values):
@@ -47,66 +51,8 @@ def initialize_config(destination, template):
         os.unlink(temporary)
 
 
-def profile(config, program, project=''):
-    with open(config, 'rb') as stream:
-        data = tomllib.loads(stream.read(65537).decode())
-        if stream.tell() > 65536:
-            raise ValueError('mboxrc exceeds 64 KiB')
-    if set(data) - {'version', 'programs'} or data.get('version') != 1:
-        raise ValueError('mboxrc requires version = 1 and a programs table')
-    programs = data.get('programs', {})
-    if not isinstance(programs, dict):
-        raise ValueError('programs must be a table')
-    # Validate all entries, not just the selected one: typos must not hide.
-    for name, entry in programs.items():
-        if not isinstance(entry, dict) or set(entry) - {'flags', 'project', 'read_only', 'read_write'}:
-            raise ValueError(f'invalid profile: {name}')
-        flags = entry.get('flags', [])
-        validate_flags(flags)
-        if entry.get('project', 'cwd') not in ('home', 'cwd'):
-            raise ValueError('profile project must be home or cwd')
-        for key in ('read_only', 'read_write'):
-            values = entry.get(key, [])
-            if not isinstance(values, list):
-                raise ValueError(f'{key} must be a list')
-            for value in values:
-                path(value)
-    entry = programs.get(os.path.basename(program), {})
-    result = list(entry.get('flags', []))
-    if entry.get('project') == 'home':
-        result += ['--project', str(Path.home())]
-    effective_project = project or (str(Path.home()) if entry.get('project') == 'home' else os.getcwd())
-    for key, option in [('read_only', '--read-only'), ('read_write', '--read-write')]:
-        for value in entry.get(key, []):
-            expanded = path(value)
-            if os.path.realpath(expanded) == os.path.realpath(effective_project):
-                continue  # The explicitly selected project already owns this mount.
-            if os.path.isfile(expanded) or os.path.isdir(expanded):
-                result += [option, expanded]
-    return result
-
-
-def validate_flags(flags):
-    # Fixed-arity only: cannot smuggle a command, project or variadic grants.
-    switches = {'--visual', '--clipboard', '--audio', '--microphone', '--camera',
-                '--no-visual', '--no-clipboard', '--no-audio', '--no-microphone',
-                '--no-camera', '--internet', '--no-internet', '--host-loopback',
-                '--shell-rc', '--no-shell-rc', '--ephemeral', '--swap'}
-    values = {'--memory', '--cpus', '--network', '--allow-port', '--expose-port',
-              '--desktop-layout', '--swap-mib', '--env', '-m', '-p', '-e', '-n'}
-    if not isinstance(flags, list) or not all(isinstance(x, str) and '\0' not in x for x in flags):
-        raise ValueError('flags must be a list of strings without NUL')
-    index = 0
-    while index < len(flags):
-        flag = flags[index]
-        if flag in values:
-            index += 1
-            if index == len(flags) or not flags[index] or flags[index].startswith('-'):
-                raise ValueError(f'missing profile flag value: {flag}')
-        elif flag not in switches and not (flag.startswith('-') and not flag.startswith('--')
-                                          and len(flag) > 1 and set(flag[1:]) <= set('avcirlsb')):
-            raise ValueError(f'unsupported profile flag: {flag}')
-        index += 1
+profile = policy['profile']
+validate_flags = policy['validate_flags']
 
 
 def shell_rc():
@@ -191,7 +137,7 @@ def fonts(program, fc_list, target):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['init', 'profile', 'shell-rc', 'fonts'])
+    parser.add_argument('operation', choices=['init', 'profile', 'prepare', 'app-key', 'lock-key', 'shell-rc', 'fonts'])
     parser.add_argument('arguments', nargs='*')
     args = parser.parse_args()
     try:
@@ -199,7 +145,13 @@ def main():
             initialize_config(*args.arguments)
             result = []
         elif args.operation == 'profile':
-            result = profile(*args.arguments)
+            result = policy['profile'](*args.arguments)
+        elif args.operation == 'prepare':
+            result = policy['prepare'](*args.arguments)
+        elif args.operation == 'app-key':
+            result = [policy['app_key'](*args.arguments)]
+        elif args.operation == 'lock-key':
+            result = [policy['lock_key'](*args.arguments)]
         elif args.operation == 'shell-rc':
             result = shell_rc()
         else:

@@ -38,7 +38,7 @@
       desktop = { type = "app"; program = "${desktop.package}/bin/mbox"; };
     };
     checks.${system}.policy = pkgs.runCommand "monkeybox-policy-tests" {
-      nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils pkgs.gnumake pkgs.stdenv.cc ];
+      nativeBuildInputs = [ pkgs.python3 pkgs.bash pkgs.coreutils pkgs.util-linux pkgs.gnumake pkgs.stdenv.cc ];
     } ''
       cp -r ${pkgs.lib.fileset.toSource {
         root = ./.;
@@ -51,6 +51,7 @@
       python3 tests/mbox-network.py --assembly-only
       python3 tests/mbox-camera-host.py
       python3 tests/mbox-resources.py
+      python3 tests/mbox-app-policy.py
       python3 tests/mbox-options.py
       python3 tests/mbox-concurrent.py
       python3 tests/mbox-memory.py

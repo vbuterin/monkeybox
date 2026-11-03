@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-pi-') as tmp:
         return r.stdout
     try:
         for flag in ['-f','--file','-p','--expose-port','-P','--persist',
-                     '-e','--env','-m','--memory','-c','--cpus','-n','--network','--image','-C','--nix-cache']:
+                     '--env','-m','--memory','--cpus','-n','--network','--image','-C','--nix-cache']:
             for suffix in ([], ['--'], ['']):
                 text=run([flag,*suffix],2)
                 assert 'requires a value' in text and 'unbound variable' not in text
@@ -89,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-pi-') as tmp:
             echo '{}' > "$HOME/.pi/agent/settings.json"
             timeout 20 pi --provider fixture --model fixture --no-tools --no-extensions --no-skills --no-context-files -p 'fixture prompt' </dev/null
         '''
-        out=run(['--host-loopback','-p',str(port),'--network','blocked','-e','PI_OFFLINE=1','--','bash','-c',script])
+        out=run(['--host-loopback','-p',str(port),'--network','blocked','--env','PI_OFFLINE=1','--','bash','-c',script])
         assert 'Permission denied' not in out and 'MBOX_PI_REPLY_OK' in out
         assert requests and requests[0][0]=='/v1/chat/completions'
         assert (agent/'auth.json').read_text()=='HOST_AUTH_NOT_SHARED'

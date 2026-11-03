@@ -32,7 +32,7 @@ MOUNTS=()
                 if expected_project:
                     assert mounts[0][1].startswith(f'{project}:{project}:'), mounts
                 if ephemeral == '1':
-                    assert mounts[-1] == ('--tmpfs', f'{guest_home}:512M'), mounts
+                    assert mounts[-1] == ('--mount-dir', f'/tmp/mbox-home.DRY-RUN:{guest_home}:rw,uid=1000,gid=1000'), mounts
                 else:
                     assert mounts[-1] == ('--mount-dir',
                         f'{base}/state/home:{guest_home}:rw,uid=1000,gid=1000'), mounts
