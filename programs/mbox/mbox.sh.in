@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # mbox — an sbox-shaped shell inside a microVM.
+# Rebuild diagnostic marker 1: intentionally no runtime behavior change.
 #
 # sbox isolates with namespaces (bwrap) and shares the host's /nix/store by
 # mounting it; mbox isolates with a hardware VM (libkrun through microsandbox)
