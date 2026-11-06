@@ -180,6 +180,45 @@ with tempfile.TemporaryDirectory(prefix='mbox-resources-') as tmp:
                                     cwd=project, env=environment, capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, result.stderr
             assert '/tmp/mbox-home.DRY-RUN:' in result.stdout and str(project) in result.stdout
+
+            # TTY relay decision: msb --no-tty feeds the guest a stdin that never
+            # reports EOF, so a terminal program (pi) hangs forever without a PTY.
+            # Only an explicit desktop opt-in (-c or --desktop-layout) downgrades
+            # an explicit command to --no-tty; everything else keeps the PTY.
+            # The probe runs on a real PTY: with piped stdout the launcher's own
+            # [ -t 1 ] guard would force --no-tty for every case.
+            import pty
+
+            def tty_flag(args):
+                master, slave = pty.openpty()
+                run = subprocess.Popen([str(launcher), *args], env=environment,
+                                       stdin=subprocess.DEVNULL, stdout=slave,
+                                       stderr=subprocess.PIPE)
+                os.close(slave)
+                captured = b''
+                while True:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    captured += chunk
+                os.close(master)
+                stderr = run.stderr.read()
+                run.stderr.close()
+                run.wait(timeout=30)
+                assert run.returncode == 0, stderr
+                match = re.search(rb'(?:^| )(-t|--no-tty)(?: |$)', captured)
+                assert match, captured
+                return match.group(1).decode()
+
+            assert tty_flag(['--dry-run', '--no-audio', '--', 'pi']) == '-t'
+            assert tty_flag(['--dry-run', '--no-audio', '-v', '--', 'pi']) == '-t'
+            assert tty_flag(['--dry-run', '-avi', '--no-audio', '--', 'pi']) == '-t'
+            assert tty_flag(['--dry-run', '--no-audio', '-v']) == '-t'
+            assert tty_flag(['--dry-run', '--no-audio', '-vc', '--', 'pi']) == '--no-tty'
+            assert tty_flag(['--dry-run', '--no-audio', '-vc', '--desktop-layout', 'tabbed', '--', 'pi']) == '--no-tty'
         finally:
             private_socket.close()
 print('PASS: atomic config, scoped profiles/overrides, RC/RO mounts, visual fonts, full launcher dry-runs')

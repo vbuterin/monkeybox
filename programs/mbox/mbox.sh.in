@@ -1121,7 +1121,14 @@ TTY_ARGS=(-t)
 # A GUI application has no shell job to receive terminal Ctrl+C. Keep the
 # launching terminal cooked so Ctrl+C cancels mbox itself instead of becoming
 # an unread byte in the guest PTY. Bare `mbox -v` retains interactive shell TTY.
-if [ "$WAYLAND" = 1 ] && [ ${#CMD[@]} -gt 0 ]; then
+# Only an explicit desktop opt-in (-c or --desktop-layout, from the command line
+# or a profile) marks the command as a GUI application. Without it, a plain
+# `mbox -avi pi` keeps the PTY relay: msb --no-tty feeds the guest a stdin that
+# never reports EOF, so a terminal program such as pi sits there waiting for
+# input forever and the launcher looks hung. Bare `mbox -v` retains interactive
+# shell TTY.
+if [ "$WAYLAND" = 1 ] && [ ${#CMD[@]} -gt 0 ] &&
+   { [ "$CLIPBOARD" = 1 ] || [ "$DESKTOP_LAYOUT_SET" = 1 ]; }; then
     TTY_ARGS=(--no-tty)
 fi
 

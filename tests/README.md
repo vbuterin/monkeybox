@@ -11,7 +11,10 @@ output. Tests concurrent/atomic first-use `.mboxrc` creation, no overwrite of
 files or dangling symlinks, strict compact-rule/legacy TOML validation, program-specific grants,
 CLI override/command boundaries, read-only symlink destinations and collisions,
 sh/bash/zsh/fish RC selection, and visual-only font copying. Full launcher dry-runs
-use a private Unix socket without touching live input, profiles or VM state.
+use a private Unix socket without touching live input, profiles or VM state, and
+cover the TTY relay decision: only an explicit desktop opt-in (-c or
+--desktop-layout) gives an explicit command --no-tty, while terminal programs
+such as pi keep the PTY (msb --no-tty stdin never reports EOF and would hang them).
 This does not replace packaged VM/font-rendering tests. The headless Firefox
 runtime test now makes its required font-directory grant explicitly.
 
