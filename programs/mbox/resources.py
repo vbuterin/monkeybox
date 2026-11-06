@@ -93,12 +93,29 @@ def bundled_fonts(program):
     if len(parts) < 5 or parts[1:3] != ('nix', 'store'):
         return []
     root = Path(*parts[:4])
+    found = bundled_font_dirs(root)
+    if found is None:
+        # Bundled fonts are a convenience on top of the host fontconfig fonts
+        # that fonts() already mounts. A package root too large to scan (for
+        # example a node_modules monorepo) must not block launching the app.
+        print(f'mbox: skipping bundled-font discovery for {root}: '
+              f'exceeded 20000 entries', file=sys.stderr)
+        return []
+    return found
+
+
+def bundled_font_dirs(root, budget=20000):
+    """Directories under the package root holding bundled font files.
+
+    Returns None when the tree exceeds the entry budget: the answer is then
+    "unknown", and callers must degrade rather than report a partial scan,
+    because os.walk order would make the mounted set vary between runs.
+    """
     found = set()
-    budget = 20000
     for directory, dirs, files in os.walk(root, followlinks=False):
         budget -= len(dirs) + len(files) + 1
         if budget < 0:
-            raise ValueError(f'font discovery exceeded 20000 entries in {root}')
+            return None
         dirs[:] = sorted(d for d in dirs if not Path(directory, d).is_symlink())
         if any(Path(f).suffix.lower() in ('.ttf', '.otf', '.ttc', '.otc', '.woff', '.woff2') for f in files):
             found.add(directory)

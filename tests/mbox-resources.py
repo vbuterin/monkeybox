@@ -76,6 +76,19 @@ with tempfile.TemporaryDirectory(prefix='mbox-resources-') as tmp:
         assert [p.read_bytes() for p in (home / 'fonts').iterdir()] == [b'font fixture']
         assert r.bundled_fonts('/bin/sh') == []
 
+        # A package root too large to scan degrades to no bundled fonts — the
+        # launch must not die over a convenience feature. A completed scan
+        # still finds font directories deterministically.
+        giant = home / 'giant-pkg'; (giant / 'bin').mkdir(parents=True)
+        for index in range(20001):
+            (giant / 'bin' / f'f{index}').write_text('')
+        assert r.bundled_font_dirs(giant) is None
+        fonted = home / 'fonted-pkg'; assets = fonted / 'share' / 'fonts'
+        assets.mkdir(parents=True)
+        (assets / 'bundled.ttf').write_bytes(b'x')
+        (fonted / 'readme.md').write_text('x')
+        assert r.bundled_font_dirs(fonted) == [str(assets)]
+
         # Real RO mount fragment: preserve symlink destination, reject invalid
         # paths and collisions rather than quietly retaining a writable mount.
         ro = source[source.index('for m in "${EXTRA_RO_MOUNTS[@]}"'):source.index('if [ "$SHELL_RC" = 1 ]')]
