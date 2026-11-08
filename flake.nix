@@ -64,6 +64,7 @@
       python3 tests/mbox-file-mounts.py
       python3 tests/mbox-home-project.py
       python3 tests/mbox-mount-dedupe.py
+      python3 tests/mbox-diagnostics.py
       # xattr metadata tests require a host filesystem supporting user xattrs;
       # Nix build sandboxes may not provide that. Run them explicitly on host.
       python3 tests/mbox-clipboard.py

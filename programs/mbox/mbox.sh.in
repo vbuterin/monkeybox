@@ -150,6 +150,10 @@ Options:
   -e, --ephemeral          Fresh private home under /tmp, deleted on exit; incompatible with -d
       --fresh              Compatibility flag: every invocation boots a new sandbox
       --dry-run            Print the msb invocation instead of running it
+      --diagnostics        Record this run's diagnostic trail — launcher decisions,
+                           guest preamble, waypipe/clipboard/wine/input traces, msb
+                           system log — in one 0600 file under <state>/logs
+                           (also MBOX_DIAGNOSTICS=1)
   -h, --help               This text
 
 Without COMMAND, an interactive login shell starts. The home directory, the
@@ -200,6 +204,12 @@ SWAP_ENABLED=0
 FRESH=0
 EPHEMERAL=0
 EPHEMERAL_HOME=""
+DIAGNOSTICS=${MBOX_DIAGNOSTICS:-0}
+DIAG_LOG=""
+# Snapshot TTY state before --diagnostics turns stdout into a tee pipe; the
+# msb TTY decision must reflect the user's terminal, not the capture.
+MBOX_STDOUT_TTY=0
+if [ -t 1 ]; then MBOX_STDOUT_TTY=1; fi
 CLIPBOARD=0
 DESKTOP_LAYOUT=side-by-side
 DESKTOP_LAYOUT_SET=0
@@ -322,6 +332,7 @@ while [ $# -gt 0 ]; do
         -e | --ephemeral) EPHEMERAL=1; shift ;;
         --fresh) FRESH=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
+        --diagnostics) DIAGNOSTICS=1; shift ;;
         --*)
             # User abbreviations are resolved only after the real command boundary.
             # Unknown names still fail on the no-config reparse.
@@ -372,6 +383,10 @@ if [ "$USE_CONFIG" = 1 ]; then
     fi
     defaults=()
     mapfile -d '' -t defaults < "$profile_args"
+    if [ "$DIAGNOSTICS" = 1 ]; then
+        printf '===== mbox diag [profile] resolved defaults from %s\n' "$CONFIG_FILE" >&2
+        tr '\000' '\n' < "$profile_args" | sed 's/^/  /' >&2
+    fi
     rm -f -- "$profile_args"
     exec "$0" --no-config "${defaults[@]}"
 fi
@@ -422,6 +437,46 @@ if [ "$APP_HOME" = 1 ]; then
     SANDBOX="mbox-${APP_KEY:0:12}-$INVOCATION_ID"
 fi
 PERSIST_ROOT="$PROJECT_STATE/persist"
+
+# ---- diagnostics ----------------------------------------------------------
+# One file per invocation; every layer appends to it. The launcher records its
+# decisions, everything it and the guest print on stdout/stderr is teed into
+# the file from here on, the guest preamble and verbose tool traces come back
+# through the session relay, and the exit trap appends msb's system log plus a
+# closing marker. Never read by the launcher; written for post-run inspection.
+# The file can hold environment values, paths and input transcripts: it is
+# created 0600 inside the private state root.
+diag() {
+    [ "$DIAGNOSTICS" = 1 ] || return 0
+    printf '===== mbox diag [%s] %s\n' "$1" "${*:2}" >&2
+}
+diag_exit() {
+    [ "$DIAGNOSTICS" = 1 ] || return 0
+    {
+        printf '===== mbox diag [msb system log] %s\n' "$SANDBOX"
+        "$MSB" logs --source system "$SANDBOX" 2>&1 || printf '(msb system log unavailable)\n'
+        printf '===== mbox diag [end] at %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } >> "$DIAG_LOG" || true
+    echo "mbox: diagnostics log: $DIAG_LOG" >&2
+}
+if [ "$DIAGNOSTICS" = 1 ]; then
+    mkdir -p -m 700 "$STATE_ROOT/logs"
+    DIAG_LOG="$STATE_ROOT/logs/diag-$(date -u +%Y%m%dT%H%M%SZ)-$SANDBOX.log"
+    : > "$DIAG_LOG" && chmod 600 "$DIAG_LOG"
+    {
+        printf '===== mbox diag [header] run begins\n'
+        printf 'date: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        printf 'script: %s\n' "$0"
+        printf 'msb: %s\n' "$MSB"
+        printf 'project: %s\n' "$PROJECT"
+        printf 'state: %s\n' "$PROJECT_STATE"
+        printf 'sandbox: %s\n' "$SANDBOX"
+    } >> "$DIAG_LOG"
+    echo "mbox: diagnostics recording to $DIAG_LOG" >&2
+    # From here every line the launcher or the guest produces is captured.
+    # Tee appenders run concurrently; O_APPEND appends cannot overwrite.
+    exec > >(tee -a "$DIAG_LOG") 2> >(tee -a "$DIAG_LOG" >&2)
+fi
 
 # Locks are host-side, outside every guest home. Do not unlink lock files: that
 # would allow two different inodes to represent the same locked resource.
@@ -561,7 +616,7 @@ cleanup_nix_cache() {
 }
 # Install once, before allocating either resource. Attempt both cleanups even
 # if one directory cannot be removed; neither feature can clobber the other.
-trap 'cleanup_desktop || true; cleanup_nix_cache; if [ -n "$MANAGEMENT_ID" ]; then @@MANAGE@@ unregister "$MANAGEMENT_ID" || true; fi' EXIT
+trap 'cleanup_desktop || true; cleanup_nix_cache; if [ -n "$MANAGEMENT_ID" ]; then @@MANAGE@@ unregister "$MANAGEMENT_ID" || true; fi; diag_exit' EXIT
 trap 'cancel_run 130' INT
 trap 'cancel_run 143' TERM
 # Management already pins/kills this launcher's descendants. Never stop by
@@ -813,6 +868,15 @@ while [ "$mi" -lt "$MOUNT_DESTS_count" ]; do
 done
 MOUNTS=("${UNIQUE_MOUNTS[@]}")
 unset UNIQUE_MOUNTS MOUNT_DESTS mi mflag marg mdest MOUNT_DESTS_count
+if [ "$DIAGNOSTICS" = 1 ]; then
+    printf '===== mbox diag [mounts] %d grant(s)\n' "$((${#MOUNTS[@]} / 2))" >&2
+    mi=0
+    while [ "$mi" -lt "${#MOUNTS[@]}" ]; do
+        printf '  %s %s\n' -- "${MOUNTS[$mi]}" "${MOUNTS[$((mi + 1))]}" >&2
+        mi=$((mi + 2))
+    done
+    unset mi
+fi
 
 # An ephemeral home starts empty, and read-only grants that land inside it would
 # otherwise get their parent directories created by the guest's mount setup
@@ -947,6 +1011,7 @@ fi
 for e in "${EXTRA_ENV[@]}"; do
     ENVS+=(-e "$e")
 done
+[ "$DIAGNOSTICS" = 0 ] || ENVS+=(-e MBOX_DIAGNOSTICS=1)
 
 # ---- things that would otherwise be setup ---------------------------------
 # A sandbox needs /dev/kvm, and the base rootfs needs to be inside msb's cache.
@@ -1018,6 +1083,7 @@ if [ "$CAMERA" = 1 ]; then
             sleep .02
         done
         [ -S "$CAMERA_RUNTIME/frames" ] || { echo 'mbox: camera bridge timeout' >&2; exit 1; }
+        diag camera "host bridge ready after $i polls"
     fi
     DESKTOP_ARGS+=(--vsock "$CAMERA_RUNTIME/frames:5004")
 fi
@@ -1040,6 +1106,7 @@ if [ "$WAYLAND" = 1 ]; then
             sleep .02
         done
         [ -S "$waypipe_socket" ] || { echo 'mbox: waypipe timed out' >&2; exit 1; }
+        diag waypipe "host client ready after $i polls"
         if [ -n "${SWAYSOCK:-}" ]; then
             @@CLIPBOARD@@ register "$WAYPIPE_PID" "$CLIPBOARD" "$MSB" "$SANDBOX" "$MBOX_UID:$MBOX_GID"
         elif [ "$CLIPBOARD" = 1 ]; then
@@ -1151,7 +1218,7 @@ if [ "$SWAP_ENABLED" = 1 ]; then
 fi
 
 TTY_ARGS=(-t)
-[ -t 1 ] || TTY_ARGS=(--no-tty)
+[ "$MBOX_STDOUT_TTY" = 1 ] || TTY_ARGS=(--no-tty)
 # A GUI application has no shell job to receive terminal Ctrl+C. Keep the
 # launching terminal cooked so Ctrl+C cancels mbox itself instead of becoming
 # an unread byte in the guest PTY. Bare `mbox -v` retains interactive shell TTY.
@@ -1164,6 +1231,17 @@ TTY_ARGS=(-t)
 if [ "$WAYLAND" = 1 ] && [ ${#CMD[@]} -gt 0 ] &&
    { [ "$CLIPBOARD" = 1 ] || [ "$DESKTOP_LAYOUT_SET" = 1 ]; }; then
     TTY_ARGS=(--no-tty)
+fi
+
+if [ "$DIAGNOSTICS" = 1 ]; then
+    {
+        printf '===== mbox diag [session] net=%s tty=%s clipboard=%s desktop-layout=%s\n' \
+            "$NET_MODE" "${TTY_ARGS[*]}" "$CLIPBOARD" "$DESKTOP_LAYOUT"
+        printf '%s\n' '--- environment arguments:'
+        printf '  %s\n' -- "${ENVS[@]}"
+        printf '%s\n' '--- guest command chain:'
+        printf '  %q\n' -- "${INNER[@]}"
+    } >&2
 fi
 
 # ---- lifecycle ------------------------------------------------------------
@@ -1185,4 +1263,7 @@ if [ "$DRY_RUN" != 1 ]; then
         echo 'mbox: instance management registration unavailable' >&2
     }
 fi
-run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} "$IMAGE" -- "${INNER[@]}"
+status=0
+run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} "$IMAGE" -- "${INNER[@]}" || status=$?
+diag msb "run exited with status $status"
+exit "$status"

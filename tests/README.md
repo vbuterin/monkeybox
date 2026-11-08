@@ -18,6 +18,12 @@ such as pi keep the PTY (msb --no-tty stdin never reports EOF and would hang the
 This does not replace packaged VM/font-rendering tests. The headless Firefox
 runtime test now makes its required font-directory grant explicitly.
 
+`python3 tests/mbox-diagnostics.py` dry-runs the real launcher with
+`--diagnostics` against a stub msb (private HOME/state, no VM): one 0600 log
+per run, header/profile/mounts/session sections, teed stdout and stderr, the
+MBOX_DIAGNOSTICS=1 guest environment argument, the exit-trap footer with the
+msb system log, section order, and no logs directory without the flag.
+
 ## Nested desktop lifetime regressions
 
 - `python3 tests/mbox-desktop-session-policy.py` runs the real supervisor and

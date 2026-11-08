@@ -5,6 +5,25 @@ shift 2
 runtime=$(mktemp -d /tmp/mbox-desktop.XXXXXXXX)
 chmod 700 "$runtime"
 export XDG_RUNTIME_DIR="$runtime"
+# --diagnostics asks the guest to introduce itself in the shared log: kernel,
+# memory, full environment, mount table and the private runtime. Anything the
+# guest prints reaches the launcher's tee through the session relay.
+if [ "${MBOX_DIAGNOSTICS:-0}" = 1 ]; then
+    {
+        echo '===== mbox diag [guest preamble]'
+        echo "kernel: $(uname -r)  user: $(id -un 2>/dev/null || id -u)"
+        grep -E 'MemTotal|MemAvailable' /proc/meminfo || true
+        echo '--- guest environment:'
+        export -p | sed 's/^declare -x //'
+        echo '--- guest mounts:'
+        grep -vE ' (proc|sysfs|devtmpfs|cgroup|securityfs|pstore|bpf|debugfs|tracefs|configfs|mqueue|hugetlbfs|fusectl)' /proc/mounts || true
+        echo '--- guest runtime:'
+        ls -la "$runtime" || true
+        echo '--- dmesg tail:'
+        dmesg 2>/dev/null | tail -30 || echo '(dmesg unavailable)'
+        echo '===== mbox diag [guest preamble end]'
+    } >&2
+fi
 audio_pid=""
 cleanup() {
     if [ -n "$audio_pid" ]; then
@@ -42,6 +61,13 @@ ALSA
 fi
 if [ "$wayland" = 1 ]; then
     export LIBGL_ALWAYS_SOFTWARE=1
+    if [ "${MBOX_DIAGNOSTICS:-0}" = 1 ]; then
+        # Modest default channels: loaded DLLs and process spawns trace most
+        # wine failures (missing components, wrong prefix, relay deaths).
+        # Override with WINEDEBUG=... or MBOX_DIAG_WINEDEBUG for deeper (+server).
+        export WINEDEBUG="${MBOX_DIAG_WINEDEBUG:-${WINEDEBUG:-+loaddll,+process}}"
+        echo "mbox diag [wine]: WINEDEBUG=$WINEDEBUG" >&2
+    fi
     # Let each toolkit select its IM frontend for its actual display backend.
     # Forcing GTK's Wayland IM crashes X11 Electron applications. Native GTK
     # selects Wayland text input automatically; nested X11 gets relayed commits.
@@ -58,6 +84,15 @@ if [ "$wayland" = 1 ]; then
     @@WAYPIPE@@ --no-gpu --xwls --vsock --socket 2:5001 server -- \
         @@BASH@@ -c '
             status_file=$1; shift
+            if [ "${MBOX_DIAGNOSTICS:-0}" = 1 ] && [ -z "${MBOX_DIAG_NO_WEV:-}" ]; then
+                # Runs as a sibling of the app inside the waypipe session, where
+                # WAYLAND_DISPLAY is set: pointer and keyboard press/release
+                # pairs land in the shared log. Needs guest network for the
+                # nix pull; a failure only notes itself and never blocks.
+                echo "mbox diag [input]: wev recorder starting - nix pull, 120 s cap, MBOX_DIAG_NO_WEV=1 skips" >&2
+                timeout 120 nix shell nixpkgs#wev --command wev >&2 \
+                    || echo "mbox diag [input]: wev recorder unavailable" >&2 &
+            fi
             "$@"
             status=$?
             printf "%s\n" "$status" > "$status_file"

@@ -48,6 +48,10 @@ a protocol GTK needs: use `-vc` for Firefox/GTK with the current Sway adapter.
 Software rendering only; no host GPU, X socket, session bus or native PipeWire
 socket is shared. Hardware camera support is experimental; see [camera](docs/mbox-camera.md).
 
+Reproduce any failure with `--diagnostics`: one 0600 log per run collecting
+launcher decisions, the guest preamble, input/clipboard/wine traces and msb
+system logs; see [diagnostics](docs/mbox-diagnostics.md).
+
 ## Grants
 
 Without an application profile, networking is blocked. Shipped browser/agent
@@ -274,7 +278,8 @@ is host-side tooling over that registry:
 ## Boundaries and limitations
 
 Read [security](SECURITY.md), [clipboard integration](docs/mbox-clipboard.md),
-[desktop](docs/mbox-desktop.md), [Nix cache](docs/mbox-nix-cache.md), and
+[desktop](docs/mbox-desktop.md), [diagnostics](docs/mbox-diagnostics.md),
+[Nix cache](docs/mbox-nix-cache.md), and
 [testing](tests/README.md). This is not a universal desktop sandbox or a claim of
 Qubes parity. Backend statfs accounting/performance and broader vsock lifecycle
 questions remain unresolved; selected font mitigations do not repair them.

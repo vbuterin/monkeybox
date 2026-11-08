@@ -15,6 +15,14 @@ LIMIT = 1024 * 1024
 TTL = 300
 
 
+def _diag(msg):
+    # --diagnostics: the launcher tees this host daemon's stderr into the run's
+    # single log file, so clipboard transfers leave a trace next to the input
+    # and waypipe events around them.
+    if os.environ.get('MBOX_DIAGNOSTICS') == '1':
+        print(f'mbox diag [clipboard] {msg}', file=sys.stderr, flush=True)
+
+
 class ClipboardFailure(RuntimeError):
     def __init__(self, code):
         self.code = code
@@ -264,9 +272,11 @@ def run(resources):
                       sandbox=sandbox, user=user, msb_home=os.environ['MSB_HOME'],
                       firmware=os.environ['MSB_LIBKRUNFW_PATH'], sway=os.environ.get('SWAYSOCK'))
         (path / f'session-{int(pid)}.json').write_text(json.dumps(record))
+        _diag(f"registered session pid={pid} enabled={record['enabled']} sandbox={sandbox}")
         return
     if action == 'unregister':
         (path / f'session-{int(sys.argv[2])}.json').unlink(missing_ok=True)
+        _diag(f"unregistered session pid={sys.argv[2]}")
         return
     if action == 'expire':
         time.sleep(TTL)
@@ -321,6 +331,7 @@ def run(resources):
                     raise RuntimeError('selection clipboard changed before Cut')
                 application_key(target, 'x', cut_identity)
             print(f'mbox clipboard: text exported; expires in {TTL} seconds', file=sys.stderr)
+            _diag(f'{action}: {len(data)} bytes buffered (ttl {TTL}s)')
         elif action in ('import', 'paste', 'read'):
             if not buffer.exists():
                 raise ClipboardFailure(EXPIRED)
@@ -339,6 +350,7 @@ def run(resources):
             if focused() != target:
                 raise ClipboardFailure(FOCUS)
             endpoint(target, 'import', data)
+            _diag(f'{action}: {len(data)} bytes delivered to {target}')
             if action == 'paste':
                 application_key(target, 'v')
                 print('mbox clipboard: text imported and Paste requested')

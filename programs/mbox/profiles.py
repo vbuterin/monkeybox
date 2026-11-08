@@ -20,7 +20,7 @@ VALUES = {'--memory', '--cpus', '--network', '--allow-port', '--expose-port',
 # Abbreviations may not shadow any launcher option, even one disallowed in flags.
 RESERVED = SWITCHES | VALUES | {'--help', '--config', '--no-config', '--project',
     '--read-only', '--read-write', '--file', '--persist', '--nix-cache', '--image',
-    '--camera-device', '--fresh', '--dry-run', '--migrate-home', '--optional-file', '--warn', '--previous-home'}
+    '--camera-device', '--fresh', '--dry-run', '--diagnostics', '--migrate-home', '--optional-file', '--warn', '--previous-home'}
 
 
 def expand(value):
