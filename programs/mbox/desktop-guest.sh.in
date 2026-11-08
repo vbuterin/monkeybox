@@ -90,7 +90,7 @@ if [ "$wayland" = 1 ]; then
                 # pairs land in the shared log. Needs guest network for the
                 # nix pull; a failure only notes itself and never blocks.
                 echo "mbox diag [input]: wev recorder starting - nix pull, 120 s cap, MBOX_DIAG_NO_WEV=1 skips" >&2
-                timeout 120 nix shell nixpkgs#wev --command wev >&2 \
+                timeout 120 nix --extra-experimental-features "nix-command flakes" shell nixpkgs#wev --command wev >&2 \
                     || echo "mbox diag [input]: wev recorder unavailable" >&2 &
             fi
             "$@"
