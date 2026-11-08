@@ -814,6 +814,40 @@ done
 MOUNTS=("${UNIQUE_MOUNTS[@]}")
 unset UNIQUE_MOUNTS MOUNT_DESTS mi mflag marg mdest MOUNT_DESTS_count
 
+# An ephemeral home starts empty, and read-only grants that land inside it would
+# otherwise get their parent directories created by the guest's mount setup
+# without the uid mapping the rw mounts carry — pi's profile was the first
+# casualty: the bootstrap created root-owned ~/.pi/agent to place the models.json
+# grant, and the agent's first session write died with EACCES. Pre-create every
+# mount target that lives under the home, owned by the run-as identity, before
+# the VM starts; the mounts then land on existing directories.
+if [ "$EPHEMERAL" = 1 ] && [ "$DRY_RUN" != 1 ]; then
+    mi=0
+    while [ "$mi" -lt "${#MOUNTS[@]}" ]; do
+        mflag="${MOUNTS[$mi]}"; marg="${MOUNTS[$((mi + 1))]}"
+        case "$mflag" in
+            --mount-dir | --mount-file) mdest="${marg#*:}"; mdest="${mdest%%:*}" ;;
+            --tmpfs | --mount-owned)    mdest="${marg%%:*}" ;;
+            *)                          mdest="" ;;
+        esac
+        case "$mdest" in
+            "$GUEST_HOME"/*)
+                rel="${mdest#"$GUEST_HOME"}"
+                if [ "$mflag" = "--mount-file" ]; then
+                    mkdir -p -- "$EPHEMERAL_HOME${rel%/*}"
+                else
+                    mkdir -p -- "$EPHEMERAL_HOME$rel"
+                fi
+                ;;
+        esac
+        mi=$((mi + 2))
+    done
+    # Same identity the rw mounts map to; a no-op when the launcher already runs
+    # as the run-as user, best-effort otherwise.
+    chown -R -- "$MBOX_UID:$MBOX_GID" "$EPHEMERAL_HOME" 2>/dev/null || true
+    unset mi mflag marg mdest rel
+fi
+
 
 # ---- network --------------------------------------------------------------
 # Explicit profiles avoid depending on the backend's implicit defaults.
