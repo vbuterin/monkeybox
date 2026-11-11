@@ -18,7 +18,8 @@ stdenv.mkDerivation (finalAttrs: {
   postPatch = ''
     # Fail closed if the pinned upstream config or fetch recipe changes.
     substituteInPlace config-libkrunfw_x86_64 \
-      --replace-fail '# CONFIG_SWAP is not set' 'CONFIG_SWAP=y'
+      --replace-fail '# CONFIG_SWAP is not set' 'CONFIG_SWAP=y' \
+      --replace-fail '# CONFIG_IA32_EMULATION is not set' 'CONFIG_IA32_EMULATION=y'
     substituteInPlace Makefile \
       --replace-fail 'curl --fail --location --retry 5 --retry-delay 2 $(KERNEL_REMOTE) -o $(KERNEL_TARBALL)' \
                      'ln -s ${finalAttrs.kernelSrc} $(KERNEL_TARBALL)'
@@ -33,6 +34,8 @@ stdenv.mkDerivation (finalAttrs: {
   # Verify the effective config after olddefconfig, not just the input file.
   postBuild = ''
     grep -qx 'CONFIG_SWAP=y' linux-6.12.109/.config
+    grep -qx 'CONFIG_IA32_EMULATION=y' linux-6.12.109/.config
+    grep -qx 'CONFIG_COMPAT=y' linux-6.12.109/.config
     grep -qx 'CONFIG_VIRTIO_BLK=y' linux-6.12.109/.config
     grep -qx 'CONFIG_EXT4_FS=y' linux-6.12.109/.config
     test -s libkrunfw.so.5.6.1

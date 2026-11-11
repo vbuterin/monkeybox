@@ -22,12 +22,30 @@ checkout, a mutable branch, a fetch hash placeholder, or GitHub access. The
 upstream license texts remain in the archive. The ordinary non-SEV/non-TDX
 x86_64 build uses the kernel bundle; it does not replace the msb embedded agent.
 
-The derivation makes one guest configuration change:
+The derivation makes two guest configuration changes:
 
 ```diff
 -# CONFIG_SWAP is not set
 +CONFIG_SWAP=y
+-# CONFIG_IA32_EMULATION is not set
++CONFIG_IA32_EMULATION=y
 ```
+
+`CONFIG_IA32_EMULATION` restores the 32-bit compatibility syscall gate
+(`int 0x80`) in the guest. Without it, Wine's new wow64 mode (single 64-bit
+unix loader, no `i386-unix` binaries) fails for every 32-bit PE process: `dlls/ntdll/unix/signal_x86_64.c:alloc_fs_sel`
+issues `int 0x80` with `SYS_set_thread_area` (0xf3) to install the 32-bit FS
+selector for the wow64 TEB, the vector is unassigned in this minimal kernel,
+and the guest CPU raises #GP (error 0x402 = absent IDT gate 0x80). The process
+dies at TEB setup with exit code 1 before any Wine error message, so the only
+visible trace is `traps: <name>[pid] general protection fault ip:... in
+ntdll.so` in the guest dmesg plus the host-side wine error
+`Application could not be started, or no application associated with the
+specified file.` Wine uses `int 0x80` exactly twice in `x86_64-unix/ntdll.so`
+(`set_thread_area`, `modify_ldt`); both are covered by this option plus its
+auto-selected `CONFIG_COMPAT`. Verified in the VM repro (`/tmp/vmwine/`):
+native run of the same prefix prints `WOW64-32BIT-OK`, guest run GPFs in
+`alloc_fs_sel` before the fix.
 
 It preserves every upstream kernel patch. PSI and zram remain disabled, so
 `/proc/pressure/memory` may still be unavailable. The build checks the effective
