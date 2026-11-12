@@ -72,7 +72,15 @@ if [ "$wayland" = 1 ]; then
     # Forcing GTK's Wayland IM crashes X11 Electron applications. Native GTK
     # selects Wayland text input automatically; nested X11 gets relayed commits.
     unset GTK_IM_MODULE QT_IM_MODULE XMODIFIERS
-    export MOZ_ENABLE_WAYLAND=1
+    # The desktop compositor on the far side of the waypipe pipe does not
+    # advertise wl_seat until input actually flows. GTK3 apps that query the
+    # default seat during startup — the firefox family — then get NULL back,
+    # spam GDK_IS_SEAT assertion failures and die in a SIGSEGV before the
+    # first frame (reproduced and screenshot-proven on firefox 159). The X11
+    # path is immune: Xwayland, spawned lazily through waypipe's xwls
+    # handler, always provides a core keyboard and pointer, and it is the
+    # same proven path wine takes. Keep the firefox family off Wayland.
+    export MOZ_ENABLE_WAYLAND=0
     # X11 sockets and Xwayland live inside this VM, spawned only on first use.
     # The host-side Wayland allowlist remains authoritative for X11 clients too.
     export PATH="@@SATELLITE_BIN@@:$PATH"
