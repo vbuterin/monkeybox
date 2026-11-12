@@ -624,7 +624,9 @@ let
       quotedList
       bindEntries
       bindReadOnlyEntries
-      "${msbPackage}/lib/libkrunfw.so"
+      (if cfg.swapFirmwarePath != null
+       then cfg.swapFirmwarePath
+       else "${msbPackage}/lib/libkrunfw.so")
       (if cfg.runAsUser == null then "" else cfg.runAsUser)
       (if cfg.runAsCaller then "1" else "0")
       "${cfg.baseImageTar}"
@@ -652,11 +654,14 @@ in
     swapFirmwarePath = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = "${pkgs.callPackage ../../packages/libkrunfw-swap { }}/lib/libkrunfw.so";
-      defaultText = "Monkeybox's pinned source-built libkrunfw 5.6.1 with CONFIG_SWAP=y";
+      defaultText = "Monkeybox's pinned source-built libkrunfw 5.6.1 with CONFIG_SWAP=y and CONFIG_IA32_EMULATION=y";
       description = ''
-        Immutable compatible swap-enabled libkrunfw path, selected ONLY with -s.
+        Immutable compatible swap-enabled libkrunfw path. It is the firmware for every
+        session when set (the default) and -s additionally selects the swap-enabled disk
+        profile; the bundled release firmware is only the fallback when null. The
+        source-built kernel carries CONFIG_IA32_EMULATION=y, which wow64 wine needs for
+        its 32-bit mode and nixpkgs' release libkrunfw does not.
         null makes -s fail explicitly and omits the swap firmware dependency.
-        Baseline runs always use release firmware, regardless of this option.
       '';
     };
     swapMiB = lib.mkOption {
