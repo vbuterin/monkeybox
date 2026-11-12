@@ -933,23 +933,27 @@ in
       type = lib.types.listOf lib.types.path;
       default = [
         pkgs.stdenv.cc.cc.lib
-        pkgs.glibc
         pkgs.zlib
         pkgs.openssl
         pkgs.ncurses
         pkgs.libffi
       ];
-      defaultText = ''[ gcc's lib; glibc; zlib; openssl; ncurses; libffi ]'';
+      defaultText = ''[ gcc's lib; zlib; openssl; ncurses; libffi ]'';
       description = ''
         Store paths whose `lib` directories the guest's dynamic loader is told to search.
         This exists because a wheel installed by pip has no RUNPATH of its own and the
         guest has no /etc/ld.so.cache: every library named in its NEEDED entries has to
         be findable by directory, or it fails at import with "cannot open shared object
         file" even though the package installed cleanly. The default covers what wheels
-        from PyPI tend to reference — libstdc++ and libgcc_s (gcc), libc and the dynamic
-        pieces (glibc), libz (zlib), libssl and libcrypto (openssl), libtinfo for
-        readline (ncurses), and libffi for ctypes-style code. A wheel that needs anything
-        else should add it here rather than grow special cases elsewhere.
+        from PyPI tend to reference — libstdc++ and libgcc_s (gcc), libz (zlib), libssl
+        and libcrypto (openssl), libtinfo for readline (ncurses), and libffi for
+        ctypes-style code. A wheel that needs anything else should add it here rather
+        than grow special cases elsewhere. glibc is deliberately absent: each binary's
+        own interpreter already loads the matching libc, and forcing a libc directory
+        through LD_LIBRARY_PATH shadows that choice for every guest process — a binary
+        built against a different glibc than this flake's (e.g. wine from the host
+        profile) then mixes libc versions and aborts under glibc fortify before printing
+        anything ("stack smashing detected").
       '';
     };
 
