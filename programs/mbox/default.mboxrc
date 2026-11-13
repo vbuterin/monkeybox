@@ -8,6 +8,11 @@ google-chrome:    -dvaicx -m 4096 --optional-file ~/Downloads
 brave:            -dvaicx -m 4096 --optional-file ~/Downloads
 signal-desktop:   -dvaicx --desktop-layout tabbed -m 4096 --optional-file ~/Downloads
 transmission-gtk: -dvicx -m 4096 --optional-file ~/Downloads
+# Wine apps: run the wine binary itself (`mbox -- /nix/store/*/bin/wine app.exe`),
+# the entry is keyed on that basename. -d keeps one persistent prefix per app,
+# -x stops two wines from sharing it. Add -i for programs that need the network.
+# WINEDLLOVERRIDES keeps mscoree from spawning the wine-mono dialog at boot.
+wine:             -dvx -m 8192 --env WINEDLLOVERRIDES=mscoree,mshtml=
 mplayer:          -vac --no-internet -m 2048
 evince:           -vc --no-internet -m 2048
 feh:              -vc --no-internet -m 2048

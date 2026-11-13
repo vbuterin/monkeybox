@@ -110,12 +110,19 @@ create it. The file is data, never sourced as shell code.
 
 ```text
 firefox:  -dvaicx -m 8192 --optional-file ~/Downloads ~/Screenshots
+wine:     -dvx -m 8192 --env WINEDLLOVERRIDES=mscoree,mshtml=
 evince:   -vc --no-internet -m 2048
 gimp:     -vc --no-internet -m 4096
 --online: -b --host-loopback -p 8000 -p 8012 -p 8080 -p 8545 --network open
 ```
 
-One `name: flags` entry per line. Quotes and `#` comments work; commands, globs,
+One `name: flags` entry per line. The name is the command's basename, so a
+Windows program inherits the `wine` entry only when wine itself is the command
+(`mbox -- /nix/store/…/bin/wine setup.exe`); `mbox -- ./setup.exe` does not. The
+wine entry's `--env WINEDLLOVERRIDES=mscoree,mshtml=` keeps wine's mscoree from
+launching the modal wine-mono install dialog on the first boot of a prefix, and
+`-d`/`-x` give every wine app one private prefix that only one session uses.
+Quotes and `#` comments work; commands, globs,
 backticks and shell substitutions are **not** evaluated. `~`, `${HOME}` and
 `${XDG_CONFIG_HOME}`, `${XDG_CACHE_HOME}`, `${XDG_STATE_HOME}` expand explicitly.
 `-f PATH...` requires existing writable resources; `--optional-file PATH...`
