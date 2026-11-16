@@ -70,6 +70,30 @@ static void prime_context(xcb_connection_t *conn, xcb_window_t window) {
     }
     free(map);
 }
+/* The window-manager focus lands on the application toplevel while GTK puts
+ * the input context on an interior window (and Chromium does the same). The
+ * IC's client window and the focused window still belong to the same client,
+ * so accept an ancestor walk in either direction instead of demanding exact
+ * equality. Different applications never share a window hierarchy. */
+static bool same_client(xcb_connection_t *conn, xcb_window_t a, xcb_window_t b) {
+    if (a == b) return true;
+    for (int dir = 0; dir < 2; dir++) {
+        xcb_window_t current = dir == 0 ? a : b;
+        xcb_window_t target = dir == 0 ? b : a;
+        for (int i = 0; i < 32 && current && current != target; i++) {
+            xcb_query_tree_reply_t *tree = xcb_query_tree_reply(conn, xcb_query_tree(conn, current), NULL);
+            if (getenv("MBOX_XIM_DEBUG")) fprintf(stderr, "same_client walk dir=%d from=%u to=%u cur=%u tree=%p parent=%u root=%u\n", dir, dir == 0 ? a : b, target, current, (void *)tree, tree ? tree->parent : 0, tree ? tree->root : 0);
+            if (!tree) { current = XCB_NONE; break; }
+            xcb_window_t parent = tree->parent;
+            bool at_root = parent == tree->root;
+            free(tree);
+            if (at_root || !parent || parent == current) { current = XCB_NONE; break; }
+            current = parent;
+        }
+        if (current == target) return true;
+    }
+    return false;
+}
 static void drain(xcb_connection_t *conn, xcb_im_t *im) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
@@ -85,7 +109,8 @@ static void publish_caret(xcb_connection_t *conn) {
     xcb_get_input_focus_reply_t *focus = xcb_get_input_focus_reply(conn, xcb_get_input_focus(conn), NULL);
     if (focus && focused &&
             (focus->focus == xcb_im_input_context_get_focus_window(focused) ||
-             focus->focus == xcb_im_input_context_get_client_window(focused)) &&
+             focus->focus == xcb_im_input_context_get_client_window(focused) ||
+             same_client(conn, focus->focus, xcb_im_input_context_get_client_window(focused))) &&
             (xcb_im_input_context_get_preedit_attr_mask(focused) & XCB_XIM_XNSpotLocation_MASK)) {
         xcb_window_t window = xcb_im_input_context_get_focus_window(focused);
         if (!window) window = xcb_im_input_context_get_client_window(focused);
@@ -134,7 +159,7 @@ int main(int argc, char **argv) {
     xcb_im_t *im = xcb_im_create(conn, screen_number, window, "mbox", XCB_IM_ALL_LOCALES,
         &input_styles, NULL, NULL, &encoding_list, 0, callback, NULL);
     if (!im || !xcb_im_open_im(im)) return 1;
-    xcb_im_set_use_sync_mode(im, true);
+    xcb_im_set_use_sync_mode(im, false);
     xcb_flush(conn);
     int server = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
     struct sockaddr_un address = { .sun_family = AF_UNIX };
@@ -179,7 +204,8 @@ int main(int argc, char **argv) {
             result = 'N';
         } else if (focus && focus->focus == original_focus && focused && size > 0 && size <= 16384 &&
                 (focus->focus == xcb_im_input_context_get_focus_window(focused) ||
-                 focus->focus == xcb_im_input_context_get_client_window(focused))) {
+                 focus->focus == xcb_im_input_context_get_client_window(focused) ||
+                 same_client(conn, focus->focus, xcb_im_input_context_get_client_window(focused)))) {
             size_t length = 0;
             char *compound = xcb_utf8_to_compound_text(text, size, &length);
             if (compound && length <= 60000) {
