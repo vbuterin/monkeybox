@@ -40,10 +40,11 @@ stdenv.mkDerivation (finalAttrs: {
 
   # Verify the effective config after olddefconfig, not just the input file.
   postBuild = ''
-    # The render-node mode patch must be present in the built tree (patch -f
-    # fails on rejects, but assert the effect rather than trusting that).
-    grep -A5 'drm_devnode' linux-6.12.109/drivers/gpu/drm/drm_sysfs.c \
-      | grep -q 'DRM_MINOR_RENDER'
+    # The render-node mode patch must be APPLIED in the built tree (a mail-
+    # style preamble makes `patch` skip the hunk silently, so assert the
+    # patched body inside the drm_devnode function, not just any mention).
+    grep -A5 'static char \*drm_devnode' linux-6.12.109/drivers/gpu/drm/drm_sysfs.c \
+      | grep -q '\*mode = 0666'
     grep -qx 'CONFIG_SWAP=y' linux-6.12.109/.config
     grep -qx 'CONFIG_IA32_EMULATION=y' linux-6.12.109/.config
     grep -qx 'CONFIG_COMPAT=y' linux-6.12.109/.config
