@@ -6,14 +6,21 @@
 # libvulkan_virtio.so are reachable from inside the sandbox at their host
 # store paths; the -g/--gpu launcher wires VK_DRIVER_FILES to the ICD.
 # swrast (lavapipe) stays as a CPU fallback ICD for debugging.
+#
+# Dropping microsoft-experimental (the only consumer) leaves the spirv2dxil
+# binary unbuilt. We keep the declared spirv2dxil output anyway (it ends up
+# an empty dir): mesa's postInstall does `mkdir -p $spirv2dxil`
+# unconditionally since 26.3.0, so filtering the output out would leave the
+# variable empty and kill the build with "mkdir: missing operand".
 { lib, mesa }:
 
 let
   m = mesa.override { vulkanDrivers = [ "swrast" "virtio" ]; };
 in
-  # Dropping microsoft-experimental (the only consumer) leaves the spirv2dxil
-  # binary unbuilt, so the declared spirv2dxil output would stay empty and fail
-  # the build; drop the output with it.
   m.overrideAttrs (old: {
-    outputs = builtins.filter (o: o != "spirv2dxil") old.outputs;
+    # nixpkgs mesas without the unconditional mkdir would leave this output
+    # unproduced; ensure it exists either way.
+    postInstall = (old.postInstall or "") + ''
+      mkdir -p "$spirv2dxil"
+    '';
   })
