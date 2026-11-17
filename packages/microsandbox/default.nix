@@ -7,7 +7,7 @@
 # package this is not an aarch64 build; port agent/toolchain handling before enabling it.
 { lib, rustPlatform, fetchFromGitHub, fetchurl, pkg-config, cmake, ninja,
   clang, libclang, python3, perl, libcap_ng, openssl, zlib, glibc,
-  libepoxy, libdrm, virglrenderer, zstd }:
+  libepoxy, libdrm, virglrenderer, zstd, aws-lc }:
 rustPlatform.buildRustPackage {
   pname = "microsandbox";
   version = "0.7.3-vsock-pr171";
@@ -32,11 +32,15 @@ rustPlatform.buildRustPackage {
   # rutabaga's build.rs pkg-config-probes epoxy/libdrm/virglrenderer when the
   # gpu feature is on; virglrenderer ships venus support (nixpkgs builds it
   # with -Dvenus whenever vulkanSupport, the Linux default).
-  # zstd: newer nixpkgs cargo infra makes the vendored zstd-sys take its
-  # pkg-config branch (build.rs probes libzstd with --static and panics
-  # without libzstd.pc in PKG_CONFIG_PATH); provide it and the probe —
-  # or the vendored-source path — both resolve.
-  buildInputs = [ libcap_ng openssl zlib zstd libepoxy libdrm virglrenderer ];
+  # zstd + aws-lc: newer nixpkgs (d5cc6833) cargo hooks force system libs —
+  # cargoSetupHook exports ZSTD_SYS_USE_PKG_CONFIG=1 and
+  # AWS_LC_SYS_USE_SYSTEM=1, so the vendored zstd-sys build.rs pkg-config
+  # probe needs libzstd.pc, and aws-lc-sys probes pkg-config modules
+  # openssl/aws-lc for an AWS-LC install (aws-lc.pc + the dev output's
+  # include/aws-lc/openssl/base.h + share/rust/aws_lc_bindings.rs satisfy
+  # its OPENSSL_IS_AWSLC + >=1.68.0 checks). Builds on older nixpkgs take
+  # the vendored-source paths and ignore both.
+  buildInputs = [ libcap_ng openssl zlib zstd aws-lc libepoxy libdrm virglrenderer ];
   LIBCLANG_PATH = "${libclang.lib}/lib";
   # Pin the commit, not a mutable PR URL. Backport only its three-file diff to
   # 0.1.39; no implicit upgrade to the PR branch's newer backend/ABI dependencies.
