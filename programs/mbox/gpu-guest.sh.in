@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Guest preamble for -g/--gpu sessions. The engine attaches a virtio-gpu
+# device when the host passes MSB_GPU_VIRGL_FLAGS; this side points the
+# guest's Vulkan loader at the mesa virtio (venus) ICD — the virtio-gpu guest
+# driver — so Vulkan in the sandbox reaches the host GPU through venus.
+# The ICD path is absolute into the shared /nix/store. Execs the session.
+export VK_DRIVER_FILES="@@MESA_VENUS_ICD@@${VK_DRIVER_FILES:+:$VK_DRIVER_FILES}"
+exec "$@"

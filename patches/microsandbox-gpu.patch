@@ -1,0 +1,47 @@
+diff -ruN '--exclude=target' a/crates/cli/Cargo.toml b/crates/cli/Cargo.toml
+--- a/crates/cli/Cargo.toml	2026-09-24 13:55:09.000000000 +0000
++++ b/crates/cli/Cargo.toml	2026-11-17 02:35:38.277314064 +0000
+@@ -30,6 +30,7 @@
+     "microsandbox-runtime/embed-binaries",
+ ]
+ ssh = ["microsandbox/ssh", "dep:russh"]
++gpu = ["microsandbox-runtime/gpu"]
+ net = [
+     "dep:microsandbox-network",
+     "microsandbox-runtime/net",
+diff -ruN '--exclude=target' a/crates/runtime/Cargo.toml b/crates/runtime/Cargo.toml
+--- a/crates/runtime/Cargo.toml	2026-09-24 13:55:09.000000000 +0000
++++ b/crates/runtime/Cargo.toml	2026-11-17 02:36:01.036557397 +0000
+@@ -35,6 +35,7 @@
+ download-binaries = ["runner", "microsandbox-filesystem/download-binaries"]
+ embed-binaries = ["runner", "microsandbox-filesystem/embed-binaries"]
+ net = ["dep:microsandbox-network", "msb_krun?/net"]
++gpu = ["msb_krun?/gpu"]
+ 
+ [dependencies]
+ base64.workspace = true
+diff -ruN '--exclude=target' a/crates/runtime/lib/runner/vm.rs b/crates/runtime/lib/runner/vm.rs
+--- a/crates/runtime/lib/runner/vm.rs	2026-09-24 13:55:09.000000000 +0000
++++ b/crates/runtime/lib/runner/vm.rs	2026-11-17 02:38:25.116295099 +0000
+@@ -2663,6 +2663,21 @@
+     // Exit observer — runs synchronously before _exit() for DB cleanup.
+     builder = builder.on_placement(on_placement).on_exit(on_exit);
+ 
++    // GPU passthrough — opt-in via MSB_GPU_VIRGL_FLAGS (hex, raw virglrenderer
++    // init bits: 1<<5 EXTERNAL_BLOB, 1<<6 VENUS, 1<<7 NO_VIRGL). The builder
++    // method exists only when the gpu feature is compiled in; the flags word
++    // is forwarded verbatim to rutabaga's VirglRendererFlags::from(u32).
++    #[cfg(feature = "gpu")]
++    if let Ok(raw) = std::env::var("MSB_GPU_VIRGL_FLAGS") {
++        match u32::from_str_radix(raw.trim().trim_start_matches("0x"), 16) {
++            // gpu_virgl_flags is a ConsoleBuilder method; console() composes.
++            Ok(flags) => builder = builder.console(|c| c.gpu_virgl_flags(flags)),
++            Err(_) => eprintln!(
++                "msb: MSB_GPU_VIRGL_FLAGS={raw:?} is not a hex u32; starting without a GPU device"
++            ),
++        }
++    }
++
+     let mut vm = builder
+         .build()
+         .map_err(|e| RuntimeError::Custom(format!("build VM: {e}")))?;

@@ -31,6 +31,7 @@
       test-fixture = fixture.wrapper;
       clipboard = base.clipboardPackage;
       microsandbox = pkgs.callPackage ./packages/microsandbox {};
+      mesa-venus = pkgs.callPackage ./packages/mesa-venus {};
       libkrunfw-swap = pkgs.callPackage ./packages/libkrunfw-swap {};
     };
     apps.${system} = {

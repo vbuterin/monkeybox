@@ -11,6 +11,7 @@ the flag.
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import stat
 import subprocess
@@ -26,9 +27,11 @@ with tempfile.TemporaryDirectory(prefix='mbox-diagnostics-') as tmp:
     config = home / '.mboxrc'
     config.write_text('version = 1\n')
     stub = home / 'msb-stub'
-    stub.write_text('''#!/usr/bin/env bash
+    # Absolute bash interpreter: sandboxed nix builds lack /usr/bin/env.
+    stub.write_text('#!' + shutil.which('bash') + '''
 if [ "$1" = logs ]; then
-    echo "stub-system-log-for-$3"
+    # msb logs --source system <name>: the name is the fourth word.
+    echo "stub-system-log-for-$4"
     exit 0
 fi
 echo "stub-msb-unexpected:$*"
@@ -50,12 +53,16 @@ echo "stub-msb-unexpected:$*"
     launcher.write_text(source)
     for token, value in tokens.items():
         launcher.write_text(launcher.read_text().replace('@@' + token + '@@', value))
+    # Absolute bash interpreter: sandboxed nix builds lack /usr/bin/env.
+    launcher.write_text(launcher.read_text().replace('#!/usr/bin/env bash', '#!' + shutil.which('bash'), 1))
     launcher.chmod(0o700)
 
     private_socket = socket.socket(socket.AF_UNIX)
     private_socket.bind(str(home / 'wayland'))
     try:
-        environment = dict(os.environ, MBOX_SKIP_KVM_CHECK='1',
+        # HOME must exist: nix build sandboxes set HOME to the non-existent
+        # /homeless-shelter, and first-use config creation needs a real home.
+        environment = dict(os.environ, HOME=str(home), MBOX_SKIP_KVM_CHECK='1',
                            MSB_PATH=str(stub),
                            MBOX_STATE_ROOT=str(home / 'state'),
                            MSB_HOME=str(home / 'state/engine'))

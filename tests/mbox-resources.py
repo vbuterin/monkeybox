@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 from unittest.mock import patch
 
@@ -111,7 +112,9 @@ with tempfile.TemporaryDirectory(prefix='mbox-resources-') as tmp:
         # Execute the real parser/profile re-exec, but stop before any VM setup.
         parser = source[source.index('ORIGINAL_ARGS='):source.index('# Refuse to nest.')]
         apply = source[source.index('# Resolve profile'):source.index('if [ "$DESKTOP_LAYOUT_SET" = 1 ]')]
-        fixture = '#!/usr/bin/env bash\nset -eu\n' + parser + apply
+        # Absolute bash interpreter: sandboxed nix builds provide no
+        # /usr/bin/env for a '#!/usr/bin/env bash' shebang.
+        fixture = '#!' + shutil.which('bash') + '\nset -eu\n' + parser + apply
         fixture += '\nprintf "%s\\0" "$WAYLAND" "$SHELL_RC" "$PROJECT_DIR" "${CMD[@]}" "${EXTRA_MOUNTS[@]}"\n'
         fixture = fixture.replace('@@ALLOW_TCP@@', '').replace('@@PUBLISH_TCP@@', '')
         fixture = fixture.replace('@@PYTHON@@', 'python3').replace('@@RESOURCES@@', str(root / 'programs/mbox/resources.py'))
@@ -145,6 +148,7 @@ with tempfile.TemporaryDirectory(prefix='mbox-resources-') as tmp:
                       CACERT=str(empty), HOOK_FILE=str(empty), BASHRC_SYSTEM=str(empty),
                       SWAP_MIB='8192', AGENT_WAIT='100')
         full = source
+        full = full.replace('#!/usr/bin/env bash', '#!' + shutil.which('bash'), 1)
         for token, value in tokens.items():
             full = full.replace('@@' + token + '@@', value)
         launcher.write_text(full)

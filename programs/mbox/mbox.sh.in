@@ -144,6 +144,11 @@ Options:
       --cpus N             vCPU limit
   -m, --memory SIZE        Memory limit, e.g. 4096M
   -s, --swap              Opt in to swap-enabled firmware and guest disk swap.
+  -g, --gpu               Attach a virtio-gpu device for compute (Vulkan via
+                          virglrenderer/venus, no display). The guest's Vulkan
+                          loader is pointed at the mesa virtio ICD; override
+                          the host-side virgl flags with MBOX_GPU_VIRGL_FLAGS
+                          (hex, default E9 = venus+blob+surfaceless+egl).
       --swap-mib N        Size used with -s, in MiB (64..65536; default 8192).
                           Setting a size alone does NOT enable swap.
                           Without -s, always use the baseline release firmware.
@@ -215,6 +220,7 @@ DESKTOP_LAYOUT=side-by-side
 DESKTOP_LAYOUT_SET=0
 CAMERA=0
 CAMERA_DEVICE=/dev/video0
+GPU=0
 WAYLAND=0
 AUDIO=0
 MICROPHONE=0
@@ -299,6 +305,7 @@ while [ $# -gt 0 ]; do
         --cpus) CPUS="$2"; shift 2 ;;
         -m | --memory) MEMORY="$2"; shift 2 ;;
         -s | --swap) SWAP_ENABLED=1; shift ;;
+        -g | --gpu) GPU=1; shift ;;
         --swap-mib)
             if ! [[ "$2" =~ ^[1-9][0-9]{1,4}$ ]] ||
                [ "$2" -lt 64 ] || [ "$2" -gt 65536 ]; then
@@ -1188,6 +1195,11 @@ while IFS= read -r -d '' a; do INNER+=("$a"); done < <(inner_command "${CMD[@]}"
 if [ "$CAMERA" = 1 ]; then
     INNER=("@@CAMERA_GUEST@@" "${INNER[@]}")
 fi
+if [ "$GPU" = 1 ]; then
+    # Outermost so the venus ICD export reaches every inner wrapper and the
+    # session command. Host-side virgl flags are exported next to run_msb.
+    INNER=("@@GPU_GUEST@@" "${INNER[@]}")
+fi
 if [ "$WAYLAND" = 1 ] || [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
     if [ "$CLIPBOARD" = 1 ]; then
         INNER=("@@CLIPBOARD_DESKTOP@@" "$DESKTOP_LAYOUT" "${INNER[@]}")
@@ -1235,8 +1247,8 @@ fi
 
 if [ "$DIAGNOSTICS" = 1 ]; then
     {
-        printf '===== mbox diag [session] net=%s tty=%s clipboard=%s desktop-layout=%s\n' \
-            "$NET_MODE" "${TTY_ARGS[*]}" "$CLIPBOARD" "$DESKTOP_LAYOUT"
+        printf '===== mbox diag [session] net=%s tty=%s clipboard=%s desktop-layout=%s image=%s\n' \
+            "$NET_MODE" "${TTY_ARGS[*]}" "$CLIPBOARD" "$DESKTOP_LAYOUT" "$IMAGE"
         printf '%s\n' '--- environment arguments:'
         printf '  %s\n' -- "${ENVS[@]}"
         printf '%s\n' '--- guest command chain:'
@@ -1264,6 +1276,14 @@ if [ "$DRY_RUN" != 1 ]; then
     }
 fi
 status=0
+if [ "$GPU" = 1 ]; then
+    # Hex virglrenderer init flags read by the engine runner (see
+    # patches/microsandbox-gpu.patch): bit0 USE_EGL, bit3 USE_SURFACELESS,
+    # bit5 USE_EXTERNAL_BLOB (required by venus), bit6 VENUS, bit7 NO_VIRGL.
+    # Default E9 = venus + external blob + surfaceless + egl + no-GL (compute
+    # only, no host EGL context). Overridable for debugging.
+    export MSB_GPU_VIRGL_FLAGS="${MBOX_GPU_VIRGL_FLAGS:-E9}"
+fi
 run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} "$IMAGE" -- "${INNER[@]}" || status=$?
 diag msb "run exited with status $status"
 exit "$status"

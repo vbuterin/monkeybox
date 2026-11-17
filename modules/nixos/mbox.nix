@@ -489,6 +489,17 @@ let
     [ "${pkgs.socat}/bin/socat" "${mboxWaypipe}/bin/waypipe" "${pkgs.alsa-plugins}/lib/alsa-lib" "${guestSatellite}/bin" "${pkgs.bash}/bin/bash" ]
     (builtins.readFile ../../programs/mbox/desktop-guest.sh.in));
 
+  # Guest preamble for -g/--gpu: points the guest Vulkan loader at the mesa
+  # virtio (venus) ICD built above. With the gpu option off, the token still
+  # needs a substitution target; use a pass-through wrapper.
+  gpuGuest =
+    if cfg.gpu then
+      pkgs.writeShellScript "mbox-gpu-guest" (builtins.replaceStrings
+        [ "@@MESA_VENUS_ICD@@" ]
+        [ "${(pkgs.callPackage ../../packages/mesa-venus { }).out}/share/vulkan/icd.d/virtio_icd.x86_64.json" ]
+        (builtins.readFile ../../programs/mbox/gpu-guest.sh.in))
+    else pkgs.writeShellScript "mbox-gpu-guest" ''exec "$@"'';
+
   cameraSource = pkgs.stdenv.mkDerivation {
     name = "mbox-camera-source";
     dontUnpack = true;
@@ -554,6 +565,7 @@ let
       "@@AUDIO_HOST@@"
       "@@CAMERA_HOST@@"
       "@@CAMERA_GUEST@@"
+      "@@GPU_GUEST@@"
       "@@FONT_MOUNTS@@"
       "@@RESOURCES@@"
       "@@DEFAULT_CONFIG@@"
@@ -605,6 +617,7 @@ let
       "${audioHost}"
       "${cameraHost}"
       "${cameraGuest}"
+      "${gpuGuest}"
       "${fontMounts}"
       "${../../programs/mbox}/resources.py"
       "${../../programs/mbox/default.mboxrc}"
@@ -788,6 +801,17 @@ in
       type = lib.types.int;
       default = 4;
       description = "vCPUs per sandbox.";
+    };
+
+    gpu = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Build the mesa virtio (venus) Vulkan driver and let -g/--gpu attach a
+        virtio-gpu device so guest compute reaches the host GPU (virglrenderer
+        on the host, venus protocol in the guest). Display stays absent; this
+        is for Vulkan compute such as llama.cpp. Costs one mesa rebuild.
+      '';
     };
 
     memory = lib.mkOption {

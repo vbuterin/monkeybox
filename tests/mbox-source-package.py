@@ -34,4 +34,14 @@ assert '-p msb_krun_devices --lib virtio::console::' in pkg
 assert 'console_events_before_activation_do_not_index_queues' in console_patch
 assert 'console_events_after_reset_do_not_index_queues' in console_patch
 assert 'console.sigwinch_evt.read().is_err()' in console_patch
-print('PASS: pinned PR backport, source agent, offline Cargo, original firmware, no impure candidate; terminated-PID and inactive-console fixes and regressions wired')
+gpu_patch = (root/'patches/microsandbox-gpu.patch').read_text()
+gpu_lock_patch = (root/'patches/microsandbox-gpu-lock.patch').read_text()
+assert '../../patches/microsandbox-gpu.patch' in pkg
+assert 'cargoPatches = [ ../../patches/microsandbox-gpu-lock.patch ]' in pkg
+assert 'virglrenderer' in pkg and 'libepoxy' in pkg and 'libdrm' in pkg
+assert 'MSB_GPU_VIRGL_FLAGS' in gpu_patch and 'gpu_virgl_flags' in gpu_patch
+assert 'features embed-binaries,net,ssh,gpu' in pkg
+assert 'name = "msb_krun_rutabaga_gfx"' in gpu_lock_patch and 'name = "msb_krun_display"' in gpu_lock_patch
+assert 'name = "msb_krun_rutabaga_gfx"\n+version = "0.1.39"' in gpu_lock_patch and 'name = "msb_krun_display"\n+version = "0.1.39"' in gpu_lock_patch
+assert 'name = "bindgen"' in gpu_lock_patch  # regression: duplicate-block cleanup stays canonical
+print('PASS: pinned PR backport, source agent, offline Cargo, original firmware, no impure candidate; terminated-PID and inactive-console fixes and regressions wired; GPU (virgl/venus) feature chain wired')

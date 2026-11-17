@@ -6,7 +6,8 @@
 # Native x86_64-linux only: the agent target is fixed below. Unlike a fetch-only
 # package this is not an aarch64 build; port agent/toolchain handling before enabling it.
 { lib, rustPlatform, fetchFromGitHub, fetchurl, pkg-config, cmake, ninja,
-  clang, libclang, python3, perl, libcap_ng, openssl, zlib, glibc }:
+  clang, libclang, python3, perl, libcap_ng, openssl, zlib, glibc,
+  libepoxy, libdrm, virglrenderer }:
 rustPlatform.buildRustPackage {
   pname = "microsandbox";
   version = "0.7.3-vsock-pr171";
@@ -16,13 +17,22 @@ rustPlatform.buildRustPackage {
     rev = "f9f40e1a341922c0f66da36f10914d2aad0ca8be";
     hash = "sha256-8f7iScRqNMuHxcwmx6njvX8s7ql+0E9a87yYp8ScbA4=";
   };
-  cargoHash = "sha256-h1CKRcB0otcGibRD3gQJsGiDLJnW7BH6QxjMCJtGVT0=";
+  cargoHash = "sha256-12o/0IgmvetRUDx6sGh1wl4QIbV3qVvySzkjTxxrCQg=";
   auditable = false;
   # Historical PIDs on terminated Unix runs must not block --replace after
   # PID reuse. Retains lifecycle locking and checks live runtime endpoints.
-  patches = [ ../../patches/microsandbox-terminated-pid.patch ];
+  # GPU: enables the msb_krun gpu feature (virtio-gpu device + rutabaga with
+  # virglrenderer/venus) and an MSB_GPU_VIRGL_FLAGS env hook in the runner;
+  # see patches/microsandbox-gpu.patch. The lock hunk ships separately via
+  # cargoPatches: the vendor FOD does not receive the source patches.
+  patches = [ ../../patches/microsandbox-terminated-pid.patch
+              ../../patches/microsandbox-gpu.patch ];
+  cargoPatches = [ ../../patches/microsandbox-gpu-lock.patch ];
   nativeBuildInputs = [ pkg-config cmake ninja clang python3 perl ];
-  buildInputs = [ libcap_ng openssl zlib ];
+  # rutabaga's build.rs pkg-config-probes epoxy/libdrm/virglrenderer when the
+  # gpu feature is on; virglrenderer ships venus support (nixpkgs builds it
+  # with -Dvenus whenever vulkanSupport, the Linux default).
+  buildInputs = [ libcap_ng openssl zlib libepoxy libdrm virglrenderer ];
   LIBCLANG_PATH = "${libclang.lib}/lib";
   # Pin the commit, not a mutable PR URL. Backport only its three-file diff to
   # 0.1.39; no implicit upgrade to the PR branch's newer backend/ABI dependencies.
@@ -67,7 +77,7 @@ rustPlatform.buildRustPackage {
     cp target/x86_64-unknown-linux-gnu/ci/agentd "$TMPDIR/embed/agentd"
     export MSB_EMBED_ARTIFACTS_DIR="$TMPDIR/embed"
     cargo build --frozen --profile ci --no-default-features \
-      --features embed-binaries,net,ssh -p microsandbox-cli
+      --features embed-binaries,net,ssh,gpu -p microsandbox-cli
     runHook postBuild
   '';
   # Deliberately focused: the earlier broader vsock run on this 0.1.39 base

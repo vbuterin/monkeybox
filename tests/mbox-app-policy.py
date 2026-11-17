@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import runpy
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -38,6 +39,8 @@ if [ "${HOLD:-0}" = 1 ]; then touch "$HOME/ready"; sleep 30; fi
                          'RESOURCES':str(root / 'programs/mbox/resources.py'),
                          'DEFAULT_CONFIG':str(config)}.items():
         fixture = fixture.replace('@@'+token+'@@', value)
+    # Absolute bash interpreter: sandboxed nix builds lack /usr/bin/env.
+    fixture = fixture.replace('#!/usr/bin/env bash', '#!' + shutil.which('bash'), 1)
     launcher = home / 'launcher'; launcher.write_text(fixture); launcher.chmod(0o700)
     env = dict(os.environ, HOME=str(home), XDG_STATE_HOME=str(home / 'state-base'))
     env.pop('MBOX_SANDBOX', None)
