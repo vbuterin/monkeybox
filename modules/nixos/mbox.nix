@@ -788,6 +788,22 @@ in
       '';
     };
 
+    # Deprecated no-op kept for callers written against the pre-profile API
+    # (securepub passes `bashrc = null`). The sandbox bashrc is system-managed
+    # since the profiles work; the option accepts and discards the value so
+    # old mkMonkeybox settings still evaluate.
+    bashrc = lib.mkOption {
+      type = with lib.types; nullOr path;
+      default = null;
+      apply = _: null;
+      description = ''
+        Deprecated no-op. Formerly a file mounted read-only as the guest's
+        ~/.bashrc; superseded by the system-managed sandbox bashrc and the
+        profile/shell-sharing options. Accepted (and discarded) so callers
+        pinned to the old settings shape keep evaluating.
+      '';
+    };
+
     baseImageTar = lib.mkOption {
       type = lib.types.path;
       default = baseImage;
