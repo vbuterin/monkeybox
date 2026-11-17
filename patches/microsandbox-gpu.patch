@@ -23,7 +23,7 @@ diff -ruN '--exclude=target' a/crates/runtime/Cargo.toml b/crates/runtime/Cargo.
 diff -ruN '--exclude=target' a/crates/runtime/lib/runner/vm.rs b/crates/runtime/lib/runner/vm.rs
 --- a/crates/runtime/lib/runner/vm.rs	2026-09-24 13:55:09.000000000 +0000
 +++ b/crates/runtime/lib/runner/vm.rs	2026-11-17 02:38:25.116295099 +0000
-@@ -2663,6 +2663,25 @@
+@@ -2663,7 +2663,42 @@
      // Exit observer — runs synchronously before _exit() for DB cleanup.
      builder = builder.on_placement(on_placement).on_exit(on_exit);
  

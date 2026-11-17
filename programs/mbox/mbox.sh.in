@@ -1318,7 +1318,6 @@ if [ "$GPU" = 1 ]; then
     # "device memory allocation failed". The window is virtual address space
     # only (blobs are lazily mapped host dmabufs), so size it to the guest
     # RAM. Overridable via MBOX_GPU_SHM_SIZE (bytes).
-    local mem_bytes
     mem_bytes=$(parse_size_to_bytes "$MEMORY")
     export MSB_GPU_SHM_SIZE="${MBOX_GPU_SHM_SIZE:-$mem_bytes}"
 fi
