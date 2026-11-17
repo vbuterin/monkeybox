@@ -7,7 +7,7 @@
 # package this is not an aarch64 build; port agent/toolchain handling before enabling it.
 { lib, rustPlatform, fetchFromGitHub, fetchurl, pkg-config, cmake, ninja,
   clang, libclang, python3, perl, libcap_ng, openssl, zlib, glibc,
-  libepoxy, libdrm, virglrenderer }:
+  libepoxy, libdrm, virglrenderer, zstd }:
 rustPlatform.buildRustPackage {
   pname = "microsandbox";
   version = "0.7.3-vsock-pr171";
@@ -32,7 +32,11 @@ rustPlatform.buildRustPackage {
   # rutabaga's build.rs pkg-config-probes epoxy/libdrm/virglrenderer when the
   # gpu feature is on; virglrenderer ships venus support (nixpkgs builds it
   # with -Dvenus whenever vulkanSupport, the Linux default).
-  buildInputs = [ libcap_ng openssl zlib libepoxy libdrm virglrenderer ];
+  # zstd: newer nixpkgs cargo infra makes the vendored zstd-sys take its
+  # pkg-config branch (build.rs probes libzstd with --static and panics
+  # without libzstd.pc in PKG_CONFIG_PATH); provide it and the probe —
+  # or the vendored-source path — both resolve.
+  buildInputs = [ libcap_ng openssl zlib zstd libepoxy libdrm virglrenderer ];
   LIBCLANG_PATH = "${libclang.lib}/lib";
   # Pin the commit, not a mutable PR URL. Backport only its three-file diff to
   # 0.1.39; no implicit upgrade to the PR branch's newer backend/ABI dependencies.
