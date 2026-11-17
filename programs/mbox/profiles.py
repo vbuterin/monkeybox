@@ -16,7 +16,7 @@ SWITCHES = {'--visual', '--clipboard', '--audio', '--microphone', '--camera',
             '--app-home', '--exclusive'}
 VALUES = {'--memory', '--cpus', '--network', '--allow-port', '--expose-port',
           '--desktop-layout', '--swap-mib', '--env', '-m', '-p', '-n',
-          '--profile', '--exclusive-path'}
+          '--profile', '--exclusive-path', '-P', '--persist'}
 # Abbreviations may not shadow any launcher option, even one disallowed in flags.
 RESERVED = SWITCHES | VALUES | {'--help', '--config', '--no-config', '--project',
     '--read-only', '--read-write', '--file', '--persist', '--nix-cache', '--image',

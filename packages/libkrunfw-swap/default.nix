@@ -16,6 +16,13 @@ stdenv.mkDerivation (finalAttrs: {
   buildInputs = [ elfutils ];
 
   postPatch = ''
+    # The kernel tree is unpacked and patched by the Makefile during the build
+    # (see $(KERNEL_SOURCES) rule + scripts/apply-kernel-patches.sh), so extra
+    # kernel patches are injected into patches/ here rather than stdenv patches.
+    # 0036: DRM render nodes 0666 under devtmpfs (no udev in guests).
+    cp ${./patches/0036-drm-render-node-devtmpfs-mode-0666.patch} \
+      patches/0036-drm-render-node-devtmpfs-mode-0666.patch
+
     # Fail closed if the pinned upstream config or fetch recipe changes.
     substituteInPlace config-libkrunfw_x86_64 \
       --replace-fail '# CONFIG_SWAP is not set' 'CONFIG_SWAP=y' \
@@ -33,6 +40,10 @@ stdenv.mkDerivation (finalAttrs: {
 
   # Verify the effective config after olddefconfig, not just the input file.
   postBuild = ''
+    # The render-node mode patch must be present in the built tree (patch -f
+    # fails on rejects, but assert the effect rather than trusting that).
+    grep -A5 'drm_devnode' linux-6.12.109/drivers/gpu/drm/drm_sysfs.c \
+      | grep -q 'DRM_MINOR_RENDER'
     grep -qx 'CONFIG_SWAP=y' linux-6.12.109/.config
     grep -qx 'CONFIG_IA32_EMULATION=y' linux-6.12.109/.config
     grep -qx 'CONFIG_COMPAT=y' linux-6.12.109/.config

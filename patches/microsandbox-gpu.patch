@@ -23,14 +23,18 @@ diff -ruN '--exclude=target' a/crates/runtime/Cargo.toml b/crates/runtime/Cargo.
 diff -ruN '--exclude=target' a/crates/runtime/lib/runner/vm.rs b/crates/runtime/lib/runner/vm.rs
 --- a/crates/runtime/lib/runner/vm.rs	2026-09-24 13:55:09.000000000 +0000
 +++ b/crates/runtime/lib/runner/vm.rs	2026-11-17 02:38:25.116295099 +0000
-@@ -2663,6 +2663,21 @@
+@@ -2663,6 +2663,25 @@
      // Exit observer — runs synchronously before _exit() for DB cleanup.
      builder = builder.on_placement(on_placement).on_exit(on_exit);
  
 +    // GPU passthrough — opt-in via MSB_GPU_VIRGL_FLAGS (hex, raw virglrenderer
-+    // init bits: 1<<5 EXTERNAL_BLOB, 1<<6 VENUS, 1<<7 NO_VIRGL). The builder
-+    // method exists only when the gpu feature is compiled in; the flags word
-+    // is forwarded verbatim to rutabaga's VirglRendererFlags::from(u32).
++    // init bits: 1<<5 EXTERNAL_BLOB, 1<<6 VENUS, 1<<7 NO_VIRGL, and 1<<9
++    // RENDER_SERVER which is REQUIRED for venus — virglrenderer 1.3.0 only
++    // starts the venus render server when that bit is set, otherwise
++    // GET_CAPSET leaves the venus caps zeroed and guests enumerate 0 Vulkan
++    // devices). The builder method exists only when the gpu feature is
++    // compiled in; the flags word is forwarded verbatim to rutabaga's
++    // VirglRendererFlags::from(u32).
 +    #[cfg(feature = "gpu")]
 +    if let Ok(raw) = std::env::var("MSB_GPU_VIRGL_FLAGS") {
 +        match u32::from_str_radix(raw.trim().trim_start_matches("0x"), 16) {

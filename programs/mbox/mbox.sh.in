@@ -148,7 +148,8 @@ Options:
                           virglrenderer/venus, no display). The guest's Vulkan
                           loader is pointed at the mesa virtio ICD; override
                           the host-side virgl flags with MBOX_GPU_VIRGL_FLAGS
-                          (hex, default E9 = venus+blob+surfaceless+egl).
+                          (hex, default 3EB = venus+blob+surfaceless+egl+
+                          render-server+thread-sync+async-fence-cb).
       --swap-mib N        Size used with -s, in MiB (64..65536; default 8192).
                           Setting a size alone does NOT enable swap.
                           Without -s, always use the baseline release firmware.
@@ -1279,10 +1280,18 @@ status=0
 if [ "$GPU" = 1 ]; then
     # Hex virglrenderer init flags read by the engine runner (see
     # patches/microsandbox-gpu.patch): bit0 USE_EGL, bit3 USE_SURFACELESS,
-    # bit5 USE_EXTERNAL_BLOB (required by venus), bit6 VENUS, bit7 NO_VIRGL.
-    # Default E9 = venus + external blob + surfaceless + egl + no-GL (compute
-    # only, no host EGL context). Overridable for debugging.
-    export MSB_GPU_VIRGL_FLAGS="${MBOX_GPU_VIRGL_FLAGS:-E9}"
+    # bit5 USE_EXTERNAL_BLOB (required by venus), bit6 VENUS, bit7 NO_VIRGL,
+    # bit9 RENDER_SERVER (required: without it virglrenderer never starts the
+    # venus render server and GET_CAPSET returns zeroed caps, so the guest
+    # sees 0 Vulkan devices with wire_format_version=0).
+    # Default 3EB = venus + external blob + surfaceless + egl + no-GL +
+    # render server + thread sync + async fence cb. THREAD_SYNC and
+    # ASYNC_FENCE_CB are REQUIRED: msb's virtio-gpu device never calls
+    # virgl_renderer_poll(), and without these flags virglrenderer never
+    # creates the proxy fence-retire sync thread, so every fence (any
+    # vkQueueSubmit in the guest) never completes and the guest wedges.
+    # Overridable.
+    export MSB_GPU_VIRGL_FLAGS="${MBOX_GPU_VIRGL_FLAGS:-3EB}"
 fi
 run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} "$IMAGE" -- "${INNER[@]}" || status=$?
 diag msb "run exited with status $status"

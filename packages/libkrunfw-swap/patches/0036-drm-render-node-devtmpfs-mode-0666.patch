@@ -1,0 +1,30 @@
+From: mbox
+Subject: drm: give devtmpfs-created render nodes mode 0666
+
+The mbox guest mounts devtmpfs directly and runs no udev, so device
+nodes keep the kernel defaults.  drm_sysfs.c's devnode callback only
+supplies the path ("dri/%s"), leaving the default 0600/root for card0
+and renderD128.  Real distributions get 0666 render nodes via udev
+rules; a headless guest without udev gets neither.
+
+Unprivileged guest sessions (the engine maps the host uid) therefore
+could not open /dev/dri/renderD128, and the venus Vulkan driver saw no
+render device.  Give DRM_MINOR_RENDER nodes 0666 in the devnode
+callback, which devtmpfs honours at node creation time.  card0 stays
+0600 (it is a KMS node; the GPU compute path only needs the render
+node).
+---
+ drivers/gpu/drm/drm_sysfs.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+--- a/drivers/gpu/drm/drm_sysfs.c
++++ b/drivers/gpu/drm/drm_sysfs.c
+@@ -96,4 +96,8 @@ static char *drm_devnode(const struct device *dev, umode_t *mode)
+ static char *drm_devnode(const struct device *dev, umode_t *mode)
+ {
++	struct drm_minor *minor = to_drm_minor(dev);
++
++	if (mode && minor->type == DRM_MINOR_RENDER)
++		*mode = 0666;
+ 	return kasprintf(GFP_KERNEL, "dri/%s", dev_name(dev));
+ }
