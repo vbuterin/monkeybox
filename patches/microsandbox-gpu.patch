@@ -45,6 +45,22 @@ diff -ruN '--exclude=target' a/crates/runtime/lib/runner/vm.rs b/crates/runtime/
 +            ),
 +        }
 +    }
++    // Virtio-gpu blob window (guest-physical address space that backs every
++    // venus device-local allocation). The engine default is 8 GiB, which is
++    // smaller than typical Vulkan model weights; the launcher sizes it to the
++    // guest RAM (see mbox.sh.in). The window costs no host memory — blobs are
++    // lazily mapped host dmabufs.
++    #[cfg(feature = "gpu")]
++    if let Ok(raw) = std::env::var("MSB_GPU_SHM_SIZE") {
++        match raw.trim().parse::<usize>() {
++            Ok(size) if size > 0 => {
++                builder = builder.console(|c| c.gpu_shm_size(size));
++            }
++            _ => eprintln!(
++                "msb: MSB_GPU_SHM_SIZE={raw:?} is not a positive byte count; using the default"
++            ),
++        }
++    }
 +
      let mut vm = builder
          .build()

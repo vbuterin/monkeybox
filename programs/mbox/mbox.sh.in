@@ -1177,6 +1177,26 @@ BASE_ARGS=(
     "${ENVS[@]}"
 )
 
+# Parse a memory size like 4096M / 2G / 1048576K / 4096 (MiB default per the
+# CLI docs is not uniform — msb accepts M/G suffixes; bare numbers are MiB)
+# into bytes. Echoes the byte count; prints nothing and returns 1 on garbage.
+parse_size_to_bytes() {
+    local s="${1:-}"
+    [ -n "$s" ] || return 1
+    local n u
+    case "$s" in
+        *[!0-9KMGkmg]*) return 1 ;;
+    esac
+    n="${s%[KMGkmg]}"
+    u="${s#${n}}"
+    case "$u" in
+        ''|K|k) echo $((n * 1024)) ;;
+        M|m) echo $((n * 1024 * 1024)) ;;
+        G|g) echo $((n * 1024 * 1024 * 1024)) ;;
+        *) return 1 ;;
+    esac
+}
+
 # The command the guest runs. The hook is sourced first so the venv and PATH
 # setup happen before anything looks for an interpreter, and the command itself
 # is passed as positional parameters rather than interpolated, so arguments keep
@@ -1292,6 +1312,15 @@ if [ "$GPU" = 1 ]; then
     # vkQueueSubmit in the guest) never completes and the guest wedges.
     # Overridable.
     export MSB_GPU_VIRGL_FLAGS="${MBOX_GPU_VIRGL_FLAGS:-3EB}"
+    # The virtio-gpu blob window (guest-physical address space backing all
+    # venus device-local allocations) defaults to 8 GiB in the VMM — models
+    # with >8 GiB of Vulkan params (e.g. Qwen-Image-2.1: ~9.1 GiB) fail with
+    # "device memory allocation failed". The window is virtual address space
+    # only (blobs are lazily mapped host dmabufs), so size it to the guest
+    # RAM. Overridable via MBOX_GPU_SHM_SIZE (bytes).
+    local mem_bytes
+    mem_bytes=$(parse_size_to_bytes "$MEMORY")
+    export MSB_GPU_SHM_SIZE="${MBOX_GPU_SHM_SIZE:-$mem_bytes}"
 fi
 run_msb run "${BASE_ARGS[@]}" ${TTY_ARGS[@]+"${TTY_ARGS[@]}"} "$IMAGE" -- "${INNER[@]}" || status=$?
 diag msb "run exited with status $status"
