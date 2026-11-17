@@ -76,19 +76,48 @@ def main():
     signal.signal(signal.SIGINT, stop)
     try:
         # Do not launch an app into an already-closed desktop. Installing signal
-        # handlers first also covers cancellation during startup.
-        if not request(path, 3):
-            return 0
+        # handlers first also covers cancellation during startup. The IPC socket
+        # exists before the compositor answers it: under a cold or loaded VM the
+        # first reply can exceed the per-request budget, so wait for readiness
+        # instead of racing it with a single request.
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                ready = request(path, 3)
+                break
+            except TimeoutError:
+                if stopping:
+                    return stopping
+                if time.monotonic() > deadline:
+                    print('mbox: guest desktop never became ready', file=sys.stderr)
+                    return 1
+                time.sleep(.1)
         if stopping:
             return stopping
+        if not ready:
+            return 0
         child = subprocess.Popen(command, start_new_session=True)
+        # A disabled output is still present. Only destruction of the outer
+        # window removes it; DPMS/temporary disabling is not close. A loaded
+        # guest (fresh AppImage extraction, software rendering) can stall the
+        # compositor's IPC past the per-request budget, so tolerate transient
+        # timeouts and end the session only on a sustained outage or a reply
+        # reporting no outputs.
+        missed = 0
         while not stopping:
             status = child.poll()
             if status is not None:
                 return status if status >= 0 else 128 - status
-            # A disabled output is still present. Only destruction of the
-            # outer window removes it; DPMS/temporary disabling is not close.
-            if not request(path, 3):
+            try:
+                outputs = request(path, 3)
+                missed = 0
+            except TimeoutError:
+                missed += 1
+                if missed > 15:
+                    raise
+                time.sleep(.2)
+                continue
+            if not outputs:
                 print('mbox: desktop closed; ending guest session', file=sys.stderr)
                 # Ask any remaining views to close before terminating background
                 # processes. The shell's EXIT trap tears down the compositor.

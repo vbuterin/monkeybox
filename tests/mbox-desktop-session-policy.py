@@ -43,8 +43,14 @@ with tempfile.TemporaryDirectory(prefix='mbox-session-policy-') as tmp:
                     payload = conn.recv(size, socket.MSG_WAITALL) if size else b''
                     calls.append((kind, payload))
                     if mode == 'disconnect':
+                        # Sustained outage: never reply. The supervisor
+                        # tolerates transient stalls, so this ends the
+                        # session only after the missed-poll budget.
                         continue
-                    if mode == 'stall':
+                    if mode == 'stall' and stalls[0] > 0:
+                        # Transient stall: the compositor's IPC eventually
+                        # recovers, and the session must survive it.
+                        stalls[0] -= 1
                         time.sleep(2.2)
                         continue
                     body = json.dumps(outputs if kind == 3 else [{'success': True}]).encode()
@@ -59,8 +65,8 @@ with tempfile.TemporaryDirectory(prefix='mbox-session-policy-') as tmp:
         return subprocess.Popen([sys.executable, str(source), path, sys.executable, '-c', code],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-    def done(child, expected):
-        out, err = child.communicate(timeout=12)
+    def done(child, expected, timeout=12):
+        out, err = child.communicate(timeout=timeout)
         assert child.returncode == expected, (child.returncode, expected, out, err)
 
     for code in (0, 7, 42, 127, 143):
@@ -98,9 +104,10 @@ with tempfile.TemporaryDirectory(prefix='mbox-session-policy-') as tmp:
     done(child, 0)
     assert (0, b'[all] kill') in calls
 
-    for action in ('close', 'term', 'int', 'disconnect', 'stall', 'bad-magic', 'oversize'):
+    for action in ('close', 'term', 'int', 'stall', 'disconnect', 'bad-magic', 'oversize'):
         outputs = [{'active': True}]
         mode = 'normal'
+        stalls = [3]
         marker = Path(tmp) / action
         child = launch('import os,signal,time; '
                        'signal.signal(signal.SIGTERM, signal.SIG_IGN); '
@@ -115,14 +122,19 @@ with tempfile.TemporaryDirectory(prefix='mbox-session-policy-') as tmp:
         if action == 'close':
             outputs = []
             expected = 0
-        elif action in ('term', 'int'):
-            sig = signal.SIGTERM if action == 'term' else signal.SIGINT
+        elif action in ('term', 'int', 'stall'):
+            if action == 'stall':
+                # The supervisor rides out the bounded stalls; the app must
+                # still be running afterwards, and a signal then ends both.
+                time.sleep(9)
+                assert child.poll() is None, 'transient stall killed the session'
+            sig = signal.SIGTERM
             child.send_signal(sig)
             expected = 128 + sig
         else:
             mode = action
             expected = 1
-        done(child, expected)
+        done(child, expected, timeout=60 if action == 'disconnect' else 12)
         assert not Path(f'/proc/{pid}').exists(), (action, 'stubborn app survived')
     listener.close()
 
