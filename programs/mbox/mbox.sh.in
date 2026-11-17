@@ -1116,7 +1116,12 @@ if [ "$WAYLAND" = 1 ]; then
         [ -S "$waypipe_socket" ] || { echo 'mbox: waypipe timed out' >&2; exit 1; }
         diag waypipe "host client ready after $i polls"
         if [ -n "${SWAYSOCK:-}" ]; then
-            @@CLIPBOARD@@ register "$WAYPIPE_PID" "$CLIPBOARD" "$MSB" "$SANDBOX" "$MBOX_UID:$MBOX_GID"
+            # Registration is best-effort: a shared or non-private
+            # XDG_RUNTIME_DIR (nested/agent sessions) makes it refuse, and a
+            # failure here must not kill the desktop launch under set -e.
+            @@CLIPBOARD@@ register "$WAYPIPE_PID" "$CLIPBOARD" "$MSB" "$SANDBOX" "$MBOX_UID:$MBOX_GID" || {
+                echo 'mbox: clipboard session registration failed; continuing without it' >&2
+            }
         elif [ "$CLIPBOARD" = 1 ]; then
             echo 'mbox: --clipboard requires a host Sway session' >&2; exit 2
         fi
