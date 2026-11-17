@@ -7,7 +7,7 @@
 # package this is not an aarch64 build; port agent/toolchain handling before enabling it.
 { lib, rustPlatform, fetchFromGitHub, fetchurl, pkg-config, cmake, ninja,
   clang, libclang, python3, perl, libcap_ng, openssl, zlib, glibc,
-  libepoxy, libdrm, virglrenderer, zstd, aws-lc }:
+  libepoxy, libdrm, virglrenderer, zstd, aws-lc, sqlite }:
 rustPlatform.buildRustPackage {
   pname = "microsandbox";
   version = "0.7.3-vsock-pr171";
@@ -40,7 +40,7 @@ rustPlatform.buildRustPackage {
   # include/aws-lc/openssl/base.h + share/rust/aws_lc_bindings.rs satisfy
   # its OPENSSL_IS_AWSLC + >=1.68.0 checks). Builds on older nixpkgs take
   # the vendored-source paths and ignore both.
-  buildInputs = [ libcap_ng openssl zlib zstd aws-lc libepoxy libdrm virglrenderer ];
+  buildInputs = [ libcap_ng openssl zlib zstd aws-lc sqlite libepoxy libdrm virglrenderer ];
   LIBCLANG_PATH = "${libclang.lib}/lib";
   # Pin the commit, not a mutable PR URL. Backport only its three-file diff to
   # 0.1.39; no implicit upgrade to the PR branch's newer backend/ABI dependencies.
