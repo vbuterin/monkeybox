@@ -1,11 +1,12 @@
 --- a/drivers/gpu/drm/drm_sysfs.c
 +++ b/drivers/gpu/drm/drm_sysfs.c
-@@ -96,4 +96,8 @@ static char *drm_devnode(const struct device *dev, umode_t *mode)
+@@ -96,4 +96,9 @@ static char *drm_devnode(const struct device *dev, umode_t *mode)
  static char *drm_devnode(const struct device *dev, umode_t *mode)
  {
 +	struct drm_minor *minor = to_drm_minor(dev);
 +
-+	if (mode && minor->type == DRM_MINOR_RENDER)
++	if (mode && (minor->type == DRM_MINOR_RENDER ||
++	             minor->type == DRM_MINOR_PRIMARY))
 +		*mode = 0666;
  	return kasprintf(GFP_KERNEL, "dri/%s", dev_name(dev));
  }

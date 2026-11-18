@@ -148,8 +148,8 @@ Options:
                           virglrenderer/venus, no display). The guest's Vulkan
                           loader is pointed at the mesa virtio ICD; override
                           the host-side virgl flags with MBOX_GPU_VIRGL_FLAGS
-                          (hex, default 3EB = venus+blob+surfaceless+egl+
-                          render-server+thread-sync+async-fence-cb).
+                          (hex, default 36B = venus+blob+surfaceless+egl+
+                          virgl+render-server+thread-sync+async-fence-cb).
       --swap-mib N        Size used with -s, in MiB (64..65536; default 8192).
                           Setting a size alone does NOT enable swap.
                           Without -s, always use the baseline release firmware.
@@ -1106,7 +1106,13 @@ if [ "$WAYLAND" = 1 ]; then
     chmod 700 "$DESKTOP_RUNTIME"
     waypipe_socket="$DESKTOP_RUNTIME/waypipe"
     if [ "$DRY_RUN" != 1 ]; then
-        @@WAYPIPE@@ --no-gpu --socket "$waypipe_socket" client &
+        # The guest side drops --no-gpu for GPU sessions (DRI3/dmabuf for
+        # hardware GL); the host client must match or waypipe fails to pair.
+        if [ "$GPU" = 1 ]; then
+            @@WAYPIPE@@ --socket "$waypipe_socket" client &
+        else
+            @@WAYPIPE@@ --no-gpu --socket "$waypipe_socket" client &
+        fi
         WAYPIPE_PID=$!
         for ((i=0; i<100; i++)); do
             [ -S "$waypipe_socket" ] && break
@@ -1309,14 +1315,17 @@ if [ "$GPU" = 1 ]; then
     # bit9 RENDER_SERVER (required: without it virglrenderer never starts the
     # venus render server and GET_CAPSET returns zeroed caps, so the guest
     # sees 0 Vulkan devices with wire_format_version=0).
-    # Default 3EB = venus + external blob + surfaceless + egl + no-GL +
+    # Default 36B = 3EB with NO_VIRGL (bit 7) cleared: virgl GL contexts
+    # validated working in-guest (mesa surfaceless -> virgl -> host radeonsi)
+    # after the card-node 0666 firmware patch, so hardware GL guests get it
+    # by default. = venus + external blob + surfaceless + egl + virgl +
     # render server + thread sync + async fence cb. THREAD_SYNC and
     # ASYNC_FENCE_CB are REQUIRED: msb's virtio-gpu device never calls
     # virgl_renderer_poll(), and without these flags virglrenderer never
     # creates the proxy fence-retire sync thread, so every fence (any
     # vkQueueSubmit in the guest) never completes and the guest wedges.
     # Overridable.
-    export MSB_GPU_VIRGL_FLAGS="${MBOX_GPU_VIRGL_FLAGS:-3EB}"
+    export MSB_GPU_VIRGL_FLAGS="${MBOX_GPU_VIRGL_FLAGS:-36B}"
     # The virtio-gpu blob window (guest-physical address space backing all
     # venus device-local allocations) defaults to 8 GiB in the VMM — models
     # with >8 GiB of Vulkan params (e.g. Qwen-Image-2.1: ~9.1 GiB) fail with

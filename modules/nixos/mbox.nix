@@ -490,13 +490,17 @@ let
     (builtins.readFile ../../programs/mbox/desktop-guest.sh.in));
 
   # Guest preamble for -g/--gpu: points the guest Vulkan loader at the mesa
-  # virtio (venus) ICD built above. With the gpu option off, the token still
-  # needs a substitution target; use a pass-through wrapper.
+  # virtio (venus) ICD built above, and glvnd at the same tree's EGL vendor
+  # json (the guest has no /run/opengl-driver for glvnd's default search).
+  # With the gpu option off, the token still needs a substitution target; use
+  # a pass-through wrapper.
+  mesaVenus = pkgs.callPackage ../../packages/mesa-venus { };
   gpuGuest =
     if cfg.gpu then
       pkgs.writeShellScript "mbox-gpu-guest" (builtins.replaceStrings
-        [ "@@MESA_VENUS_ICD@@" ]
-        [ "${(pkgs.callPackage ../../packages/mesa-venus { }).out}/share/vulkan/icd.d/virtio_icd.x86_64.json" ]
+        [ "@@MESA_VENUS_ICD@@" "@@MESA_VENUS_EGL_VENDOR@@" ]
+        [ "${mesaVenus.out}/share/vulkan/icd.d/virtio_icd.x86_64.json"
+          "${mesaVenus.out}/share/glvnd/egl_vendor.d/50_mesa.json" ]
         (builtins.readFile ../../programs/mbox/gpu-guest.sh.in))
     else pkgs.writeShellScript "mbox-gpu-guest" ''exec "$@"'';
 

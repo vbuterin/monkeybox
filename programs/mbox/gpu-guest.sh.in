@@ -3,6 +3,18 @@
 # device when the host passes MSB_GPU_VIRGL_FLAGS; this side points the
 # guest's Vulkan loader at the mesa virtio (venus) ICD — the virtio-gpu guest
 # driver — so Vulkan in the sandbox reaches the host GPU through venus.
-# The ICD path is absolute into the shared /nix/store. Execs the session.
+# The ICD path is absolute into the shared /nix/store.
+# GL guests need glvnd to find the mesa EGL vendor library: the guest has no
+# /run/opengl-driver, so glvnd's default search paths are empty. The vendor
+# json lives in the same mesa tree as the ICD. MBOX_GPU_ACTIVE lets other
+# guest scripts (desktop-guest waypipe) opt into GPU paths. Execs the session.
 export VK_DRIVER_FILES="@@MESA_VENUS_ICD@@${VK_DRIVER_FILES:+:$VK_DRIVER_FILES}"
+export __EGL_VENDOR_LIBRARY_FILENAMES="@@MESA_VENUS_EGL_VENDOR@@${__EGL_VENDOR_LIBRARY_FILENAMES:+:$__EGL_VENDOR_LIBRARY_FILENAMES}"
+export MBOX_GPU_ACTIVE=1
+# Firefox-family defaults for the GPU guest. MOZ_X11_EGL=1 keeps Firefox on
+# EGL instead of GLX (Xwayland-under-waypipe offers no GLX provider).
+# MOZ_DISABLE_GPU_SANDBOX=1: Firefox's GPU-process seccomp policy blocks the
+# device opens the virtio render node needs inside the VM.
+export MOZ_X11_EGL="${MOZ_X11_EGL:-1}"
+export MOZ_DISABLE_GPU_SANDBOX="${MOZ_DISABLE_GPU_SANDBOX:-1}"
 exec "$@"

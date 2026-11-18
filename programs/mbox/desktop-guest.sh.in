@@ -85,11 +85,20 @@ if [ "$wayland" = 1 ]; then
     # The host-side Wayland allowlist remains authoritative for X11 clients too.
     export PATH="@@SATELLITE_BIN@@:$PATH"
     unset DISPLAY XAUTHORITY
+    # waypipe strips the linux-dmabuf protocol with --no-gpu, and without it
+    # Xwayland cannot offer DRI3: hardware GL clients (mesa dri3 -> the
+    # virtio render node) then fall back to software or fail outright. GPU
+    # sessions therefore omit the flag; non-GPU sessions keep it because the
+    # dmabuf handshake with a GPU-less guest only stalls startup.
+    waypipe_gpu_flag="--no-gpu"
+    if [ "${MBOX_GPU_ACTIVE:-0}" = 1 ]; then
+        waypipe_gpu_flag=""
+    fi
     # Waypipe's server status describes the transport, not its child command.
     # Record the command status inside this invocation-private guest runtime;
     # never report success when the command/bridge died before producing it.
     bridge_status=0
-    @@WAYPIPE@@ --no-gpu --xwls --vsock --socket 2:5001 server -- \
+    @@WAYPIPE@@ $waypipe_gpu_flag --xwls --vsock --socket 2:5001 server -- \
         @@BASH@@ -c '
             status_file=$1; shift
             if [ "${MBOX_DIAGNOSTICS:-0}" = 1 ] && [ -z "${MBOX_DIAG_NO_WEV:-}" ]; then
