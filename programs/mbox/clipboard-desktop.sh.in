@@ -31,7 +31,19 @@ if [ -d /usr/share/mbox-fonts ]; then
 else
     export FONTCONFIG_FILE=@@FONTCONFIG_FALLBACK@@
 fi
-export WLR_BACKENDS=wayland WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1
+# The nested compositor's output is the only surface crossing waypipe, so
+# rendering it with GLES2 on the virtio node removes the CPU-composition hop
+# and lets wlroots offer dmabufs to the transport. pixman stays the default
+# without a GPU; MBOX_GUEST_RENDERER (gles2|pixman) overrides both, e.g. to
+# bisect a compositor-side virgl regression without touching the store.
+if [ -n "${MBOX_GUEST_RENDERER:-}" ]; then
+    guest_renderer="$MBOX_GUEST_RENDERER"
+elif [ "${MBOX_GPU_ACTIVE:-0}" = 1 ]; then
+    guest_renderer=gles2
+else
+    guest_renderer=pixman
+fi
+export WLR_BACKENDS=wayland WLR_RENDERER="$guest_renderer" WLR_LIBINPUT_NO_DEVICES=1
 export WAYLAND_DISPLAY="$outer_display"
 export MBOX_XIM_SOCKET="$XDG_RUNTIME_DIR/xim.sock"
 export MBOX_CARET_FILE="$XDG_RUNTIME_DIR/caret"

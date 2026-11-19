@@ -12,6 +12,10 @@
     fixture = mk {
       packages = with pkgs; [ python3 pulseaudio wayland-utils mplayer feh xorg.xwininfo ];
       persist = [ "$HOME/.npm-global" ];
+      # GPU on: the fixture is probed with -g (desktop + WebGL sessions), so
+      # the venus ICD must be wired into the guest wrappers exactly as in the
+      # real host configuration.
+      gpu = true;
       shellHook = ''
         # MBOX_DESKTOP_TEST_FIXTURE: validated by desktop runtime suite.
         export NPM_CONFIG_PREFIX="$HOME/.npm-global"

@@ -484,9 +484,16 @@ let
       ${pkgs.dbus}/bin/dbus-run-session "$@"
   '';
 
+  # The clipboard-desktop wrapper runs between this preamble and gpu-guest, so
+  # the nested clipboard compositor (and the waypipe server) see these exports
+  # without gpu-guest's env: glvnd inside a guest has no /run/opengl-driver
+  # default search path, so a GLES2 compositor needs the vendor json here.
   desktopGuest = pkgs.writeShellScript "mbox-desktop-guest" (builtins.replaceStrings
-    [ "@@SOCAT@@" "@@WAYPIPE@@" "@@ALSA_PLUGINS@@" "@@SATELLITE_BIN@@" "@@BASH@@" ]
-    [ "${pkgs.socat}/bin/socat" "${mboxWaypipe}/bin/waypipe" "${pkgs.alsa-plugins}/lib/alsa-lib" "${guestSatellite}/bin" "${pkgs.bash}/bin/bash" ]
+    [ "@@SOCAT@@" "@@WAYPIPE@@" "@@ALSA_PLUGINS@@" "@@SATELLITE_BIN@@" "@@BASH@@" "@@MESA_VENUS_ICD@@" "@@MESA_GBM_BACKENDS@@" "@@MESA_VENUS_EGL_VENDOR@@" ]
+    [ "${pkgs.socat}/bin/socat" "${mboxWaypipe}/bin/waypipe" "${pkgs.alsa-plugins}/lib/alsa-lib" "${guestSatellite}/bin" "${pkgs.bash}/bin/bash"
+      (if cfg.gpu then "${mesaVenus.out}/share/vulkan/icd.d/virtio_icd.x86_64.json" else "")
+      (if cfg.gpu then "${mesaVenus.out}/lib/gbm" else "")
+      (if cfg.gpu then "${mesaVenus.out}/share/glvnd/egl_vendor.d/50_mesa.json" else "") ]
     (builtins.readFile ../../programs/mbox/desktop-guest.sh.in));
 
   # Guest preamble for -g/--gpu: points the guest Vulkan loader at the mesa

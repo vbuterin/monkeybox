@@ -144,4 +144,13 @@ assert 'exit "$status"' in wrapper
 assert '"$ipc" "$@" <&0 &' in wrapper
 module = (root / 'modules/nixos/mbox.nix').read_text()
 assert '${desktopSession}' in module and '${../../programs/mbox/desktop-session.py}' in module
-print('PASS: exit codes/signals, pre-launch close, disabled output, bounded malformed/stalled IPC, stubborn app cleanup, wrapper wiring')
+
+# Renderer policy: GL on the virtio node only in GPU sessions, pixman
+# otherwise, explicit MBOX_GUEST_RENDERER always wins. The display path's
+# CPU hops are the measured WebGL bottleneck (Firefox evidence file).
+desktop_guest = (root / 'programs/mbox/desktop-guest.sh.in').read_text()
+assert 'guest_renderer="$MBOX_GUEST_RENDERER"' in wrapper
+assert 'guest_renderer=gles2' in wrapper and 'guest_renderer=pixman' in wrapper
+assert 'MBOX_GPU_ACTIVE:-0}' in wrapper
+assert 'if [ "${MBOX_GPU_ACTIVE:-0}" != 1 ]; then\n        export LIBGL_ALWAYS_SOFTWARE=1\n    fi' in desktop_guest
+print('PASS: exit codes/signals, pre-launch close, disabled output, bounded malformed/stalled IPC, stubborn app cleanup, wrapper wiring, renderer policy')

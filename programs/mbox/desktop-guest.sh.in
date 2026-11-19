@@ -60,7 +60,13 @@ ALSA
     [ -S "$runtime/pulse" ] || { echo 'mbox: audio relay timed out' >&2; exit 1; }
 fi
 if [ "$wayland" = 1 ]; then
-    export LIBGL_ALWAYS_SOFTWARE=1
+    # Without a GPU the guest has no usable hardware GL; force swrast so GL
+    # clients start deterministically. In GPU sessions the virtio render node
+    # must be visible to apps instead — llvmpipe here is what made on-screen
+    # WebGL crawl (documented in the Firefox evidence file).
+    if [ "${MBOX_GPU_ACTIVE:-0}" != 1 ]; then
+        export LIBGL_ALWAYS_SOFTWARE=1
+    fi
     if [ "${MBOX_DIAGNOSTICS:-0}" = 1 ]; then
         # Modest default channels: loaded DLLs and process spawns trace most
         # wine failures (missing components, wrong prefix, relay deaths).
@@ -93,12 +99,31 @@ if [ "$wayland" = 1 ]; then
     waypipe_gpu_flag="--no-gpu"
     if [ "${MBOX_GPU_ACTIVE:-0}" = 1 ]; then
         waypipe_gpu_flag=""
+        # The waypipe server needs a Vulkan/GBM device to relay dmabuf
+        # surfaces, and it runs outside the gpu-guest wrapper, so the venus
+        # ICD has to be exported here too. Without it waypipe-server dies
+        # with "Failed to create Vulkan instance" and takes the session
+        # backend down with it.
+        export VK_DRIVER_FILES="@@MESA_VENUS_ICD@@${VK_DRIVER_FILES:+:$VK_DRIVER_FILES}"
+        # The gbm fallback path for dmabuf relaying loads gbm's DRI backend
+        # from GBM_BACKENDS_PATH; nixpkgs bakes /run/opengl-driver/lib/gbm
+        # into mesa, which a guest does not have.
+        export GBM_BACKENDS_PATH="@@MESA_GBM_BACKENDS@@${GBM_BACKENDS_PATH:+:$GBM_BACKENDS_PATH}"
+        # The clipboard-desktop wrapper (and thus its nested GLES2 compositor)
+        # runs inside this preamble, so glvnd needs the vendor json exported
+        # here — gpu-guest's export sits deeper in the wrapper chain and only
+        # reaches the session command itself.
+        export __EGL_VENDOR_LIBRARY_FILENAMES="@@MESA_VENUS_EGL_VENDOR@@${__EGL_VENDOR_LIBRARY_FILENAMES:+:$__EGL_VENDOR_LIBRARY_FILENAMES}"
     fi
+    # Debugging knob: MBOX_WAYPIPE_SERVER_DEBUG=1 runs the server with --debug,
+    # surfacing its dmabuf/Vulkan/gbm fallback decisions in the session log.
+    waypipe_server_debug=""
+    [ "${MBOX_WAYPIPE_SERVER_DEBUG:-0}" = 1 ] && waypipe_server_debug="--debug"
     # Waypipe's server status describes the transport, not its child command.
     # Record the command status inside this invocation-private guest runtime;
     # never report success when the command/bridge died before producing it.
     bridge_status=0
-    @@WAYPIPE@@ $waypipe_gpu_flag --xwls --vsock --socket 2:5001 server -- \
+    @@WAYPIPE@@ $waypipe_server_debug $waypipe_gpu_flag --xwls --vsock --socket 2:5001 server -- \
         @@BASH@@ -c '
             status_file=$1; shift
             if [ "${MBOX_DIAGNOSTICS:-0}" = 1 ] && [ -z "${MBOX_DIAG_NO_WEV:-}" ]; then

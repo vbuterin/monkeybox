@@ -1,11 +1,96 @@
+--- a/src/mainloop.rs
++++ b/src/mainloop.rs
+@@ -996,20 +996,32 @@
+     device: Option<u64>,
+ ) -> Result<DmabufDevice, String> {
+     if !opts.test_skip_vulkan {
+-        if let Some(instance) = setup_vulkan_instance(
++        match setup_vulkan_instance(
+             opts.debug,
+             &opts.video,
+             opts.test_no_timeline_export,
+             opts.test_no_binary_semaphore_import,
+-        )? {
+-            if instance.has_device(device) {
+-                return Ok(DmabufDevice::VulkanSetup(instance));
++        ) {
++            Ok(Some(instance)) => {
++                if instance.has_device(device) {
++                    return Ok(DmabufDevice::VulkanSetup(instance));
++                }
++            }
++            Ok(None) => (),
++            Err(e) => {
++                /* mbox: a broken guest ICD must not kill the session; fall
++                 * through to the gbm/shm paths below */
++                debug!("mbox: Vulkan dmabuf setup failed, trying gbm: {}", e);
+             }
+         }
+     }
+     /* Fallback path if Vulkan is not available */
+-    if let Some(dev) = setup_gbm_device(device)? {
+-        return Ok(DmabufDevice::Gbm(dev));
++    match setup_gbm_device(device) {
++        Ok(Some(dev)) => return Ok(DmabufDevice::Gbm(dev)),
++        Ok(None) => (),
++        Err(e) => {
++            debug!("mbox: gbm setup failed: {}", e);
++        }
+     }
+     Ok(DmabufDevice::Unavailable)
+ }
+@@ -1020,20 +1032,34 @@
+     device: Option<u64>,
+ ) -> Result<DmabufDevice, String> {
+     if !opts.test_skip_vulkan {
+-        if let Some(instance) = setup_vulkan_instance(
++        match setup_vulkan_instance(
+             opts.debug,
+             &opts.video,
+             opts.test_no_timeline_export,
+             opts.test_no_binary_semaphore_import,
+-        )? {
+-            if let Some(device) = setup_vulkan_device(&instance, device, &opts.video, opts.debug)? {
+-                return Ok(DmabufDevice::Vulkan((instance, device)));
++        ) {
++            Ok(Some(instance)) => {
++                match setup_vulkan_device(&instance, device, &opts.video, opts.debug) {
++                    Ok(Some(dev)) => return Ok(DmabufDevice::Vulkan((instance, dev))),
++                    Ok(None) => (),
++                    Err(e) => {
++                        debug!("mbox: Vulkan device setup failed, trying gbm: {}", e);
++                    }
++                }
++            }
++            Ok(None) => (),
++            Err(e) => {
++                debug!("mbox: Vulkan dmabuf setup failed, trying gbm: {}", e);
+             }
+-        };
++        }
+     }
+     /* Fallback path if Vulkan is not available */
+-    if let Some(dev) = setup_gbm_device(device)? {
+-        return Ok(DmabufDevice::Gbm(dev));
++    match setup_gbm_device(device) {
++        Ok(Some(dev)) => return Ok(DmabufDevice::Gbm(dev)),
++        Ok(None) => (),
++        Err(e) => {
++            debug!("mbox: gbm setup failed: {}", e);
++        }
+     }
+     Ok(DmabufDevice::Unavailable)
+ }
 --- a/src/tracking.rs
 +++ b/src/tracking.rs
-@@ -227,7 +227,21 @@
+@@ -227,7 +227,24 @@
  }
- 
+
  /** Additional information for wl_registry */
 +// mbox-only build: software application protocols, no clipboard, capture,
 +// virtual input, layer shell, output management or security-context delegation.
++// zwp_linux_dmabuf_v1 is allowed so GPU sessions can move dmabuf surfaces;
++// without a GPU on the far end waypipe still filters it out by device probing.
 +// Both advertisements AND binds are checked. The host copy is authoritative:
 +// replacing the guest waypipe cannot bypass this map.
 +fn mbox_global_allowed(name: &[u8]) -> bool {
@@ -14,7 +99,8 @@
 +        b"wl_seat" | b"xdg_wm_base" | b"wp_viewporter" | b"wp_presentation" |
 +        b"wp_fractional_scale_manager_v1" | b"zxdg_output_manager_v1" |
 +        b"zxdg_decoration_manager_v1" | b"zwp_pointer_gestures_v1" |
-+        b"zwp_relative_pointer_manager_v1" | b"zwp_pointer_constraints_v1" | b"zwp_text_input_manager_v3")
++        b"zwp_relative_pointer_manager_v1" | b"zwp_pointer_constraints_v1" |
++        b"zwp_text_input_manager_v3" | b"zwp_linux_dmabuf_v1")
 +}
 +
  struct ObjWlRegistry {
@@ -42,11 +128,11 @@
 +                return Ok(ProcMsg::Done);
 +            }
 +            reg.mbox_globals.insert(name, (intf.to_vec(), version));
- 
+
              /* Note: nothing that gets filtered out should ever be removed,
               * so it is not necessary to track interface name codes for global_remove */
 @@ -4204,9 +4227,30 @@
- 
+
              Ok(ProcMsg::Done)
          }
 +        (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_GLOBAL_REMOVE) => {

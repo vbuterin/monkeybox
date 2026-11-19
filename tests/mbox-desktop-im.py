@@ -13,7 +13,7 @@ import time
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'programs/mbox/desktop-guest.sh.in').read_text()
-setup = source.split('    export LIBGL_ALWAYS_SOFTWARE=1', 1)[1].split('    # X11 sockets', 1)[0]
+setup = source.split('its IM frontend for its actual display backend.\n', 1)[1].split('    # X11 sockets', 1)[0]
 probe = setup + '\nprintf "%s:%s:%s" "${GTK_IM_MODULE-unset}" "${QT_IM_MODULE-unset}" "${XMODIFIERS-unset}"'
 result = subprocess.check_output(['bash', '-eu', '-c', probe],
     env=dict(os.environ, GTK_IM_MODULE='wayland', QT_IM_MODULE='fcitx', XMODIFIERS='@im=fcitx'))

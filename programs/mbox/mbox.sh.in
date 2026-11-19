@@ -1018,6 +1018,11 @@ for e in "${EXTRA_ENV[@]}"; do
     ENVS+=(-e "$e")
 done
 [ "$DIAGNOSTICS" = 0 ] || ENVS+=(-e MBOX_DIAGNOSTICS=1)
+# GPU sessions mark themselves early. desktop-guest is the outermost guest
+# wrapper and runs before gpu-guest could export anything, so the marker
+# must come from the launcher: waypipe's --no-gpu elision, the nested
+# compositor's GL renderer and the LIBGL default all key on it.
+[ "$GPU" = 1 ] && ENVS+=(-e MBOX_GPU_ACTIVE=1)
 
 # ---- things that would otherwise be setup ---------------------------------
 # A sandbox needs /dev/kvm, and the base rootfs needs to be inside msb's cache.
@@ -1239,7 +1244,8 @@ if [ "$CAMERA" = 1 ]; then
 fi
 if [ "$GPU" = 1 ]; then
     # Outermost so the venus ICD export reaches every inner wrapper and the
-    # session command. Host-side virgl flags are exported next to run_msb.
+    # session command. Host-side virgl flags are exported next to run_msb;
+    # the guest-side MBOX_GPU_ACTIVE marker is exported with ENVS above.
     INNER=("@@GPU_GUEST@@" "${INNER[@]}")
 fi
 if [ "$WAYLAND" = 1 ] || [ "$AUDIO" = 1 ] || [ "$MICROPHONE" = 1 ]; then
