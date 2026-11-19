@@ -1119,17 +1119,14 @@ if [ "$WAYLAND" = 1 ]; then
         done
         [ -S "$waypipe_socket" ] || { echo 'mbox: waypipe timed out' >&2; exit 1; }
         diag waypipe "host client ready after $i polls"
-        # Opt-in window placement. The guest compositor takes seconds to map
-        # its output through waypipe, so a pid-scoped for_window rule added
-        # now always exists before the window does — no polling, no race. The
-        # rule is per-launch and keyed on the client pid, so it never matches
-        # any other desktop session's window (unlike a title-based global
-        # rule: every nested sway calls itself "wlroots - WL-1"). Dead rules
-        # are inert; a compositor reload clears them.
+        # Opt-in window placement, best-effort and asynchronous. The window
+        # cannot be matched by pid in a for_window rule: waypipe forks its
+        # display connection and the forked child is the process the
+        # compositor attributes the window to. mbox-manage float-window
+        # polls the tree and matches by ancestry instead, then floats via
+        # the precise con_id. Bounded (30 s), silent, backgrounded.
         if [ "$FLOAT_WINDOW" = 1 ] && [ -n "${SWAYSOCK:-}" ]; then
-            if ! @@SWAYMSG@@ -s "$SWAYSOCK" "for_window [pid=$WAYPIPE_PID] floating enable, resize set 1280 800, move position center" 2>/dev/null; then
-                echo 'mbox: --float-window: sway refused the window rule; continuing tiled' >&2
-            fi
+            @@MANAGE@@ float-window --swaymsg @@SWAYMSG@@ "$WAYPIPE_PID" &
         elif [ "$FLOAT_WINDOW" = 1 ]; then
             # No private sway (nested/agent session): placement is impossible.
             echo 'mbox: --float-window needs a private SWAYSOCK; continuing tiled' >&2

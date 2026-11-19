@@ -12,6 +12,7 @@ import stat
 import socket
 import struct
 import subprocess
+import time
 import sys
 import tempfile
 import time
@@ -580,6 +581,87 @@ def border_targets(nodes, records, socket_path, get_process=process):
     return targets
 
 
+def float_window(waypipe_pid, geometry, swaymsg):
+    """Wait for this session's desktop window and float it at a fixed size.
+
+    --float-window asks for a guaranteed desktop-size viewport (appimage-run
+    splash breaks on half-tiles). The window cannot be matched by pid at
+    spawn time: the waypipe client forks its display connection, and the
+    forked child is the process the compositor attributes the window to.
+    So this polls the tree and matches by /proc ancestry instead, then uses
+    the precise con_id. Visual placement only; never focus or input.
+    """
+    socket_path = os.environ.get('SWAYSOCK')
+    if not socket_path:
+        raise RuntimeError('SWAYSOCK is required')
+    try:
+        width, height = (int(part) for part in geometry.lower().split('x', 1))
+    except ValueError:
+        raise ValueError('geometry must be WxH, e.g. 1280x800')
+
+    def ipc(*args):
+        return json.loads(bounded_command([swaymsg, '-s', socket_path, '-r', *args],
+                                         dict(os.environ), timeout=2, limit=8 * 1024 * 1024))
+
+    def walk(node):
+        yield node
+        for child in node.get('nodes', []) + node.get('floating_nodes', []):
+            yield from walk(child)
+
+    # The waypipe client must still be the process we were told about; its
+    # start time rules out pid reuse while we wait.
+    try:
+        start = process(waypipe_pid)['start']
+    except (OSError, RuntimeError, ValueError, KeyError, IndexError):
+        return
+
+    def ancestry(pid):
+        chain = set()
+        for _ in range(64):
+            if pid <= 1:
+                break
+            chain.add(pid)
+            try:
+                parent = process(pid)
+            except (OSError, RuntimeError, ValueError, KeyError, IndexError):
+                break
+            if parent['state'] in ('Z', 'X', 'x'):
+                break
+            if pid == waypipe_pid and parent['start'] != start:
+                return set()
+            pid = parent['parent']
+        return chain
+
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            tree = ipc('-t', 'get_tree')
+        except (ValueError, OSError, RuntimeError):
+            time.sleep(0.25)
+            continue
+        try:
+            process(waypipe_pid)
+        except (OSError, RuntimeError, ValueError, KeyError, IndexError):
+            return  # client gone: the window will never appear
+        for node in walk(tree):
+            pid = node.get('pid')
+            if not isinstance(pid, int) or node.get('type') not in ('con', 'floating_con'):
+                continue
+            if waypipe_pid not in ancestry(pid):
+                continue
+            command = (f'[con_id={int(node["id"])}] floating enable, '
+                       f'resize set {width} {height}, move position center')
+            try:
+                reply = ipc(command)
+            except (ValueError, OSError, RuntimeError):
+                reply = []
+            if all(item.get('success') for item in reply):
+                return
+            # Closed between get_tree and the command: keep polling until
+            # the deadline in case a new window replaces it.
+        time.sleep(0.25)
+
+
 def watch_borders(swaymsg):
     """Visual-only reconciliation; never focus windows or inject input."""
     socket_path = os.environ.get('SWAYSOCK')
@@ -649,6 +731,10 @@ def main():
     p.add_argument('id', help='instance ID, or the label shown by list')
     p = sub.add_parser('borders', help='host Sway window indicator service')
     p.add_argument('--swaymsg', required=True)
+    p = sub.add_parser('float-window', help='wait for an instance waypipe window and float it (used by --float-window)')
+    p.add_argument('--swaymsg', required=True)
+    p.add_argument('--geometry', default='1280x800', help='target size, WxH (default 1280x800)')
+    p.add_argument('pid', type=int, help='the session waypipe client pid')
     p = sub.add_parser('register')
     p.add_argument('--waypipe-pid', type=int)
     p.add_argument('--mounts', nargs=argparse.REMAINDER)
@@ -663,6 +749,8 @@ def main():
                        mounts, args.waypipe_pid))
     elif args.action == 'borders':
         watch_borders(args.swaymsg)
+    elif args.action == 'float-window':
+        float_window(args.pid, args.geometry, args.swaymsg)
     elif args.action == 'unregister':
         (directory() / (resolve(args.id) + '.json')).unlink(missing_ok=True)
     elif args.action == 'list':
