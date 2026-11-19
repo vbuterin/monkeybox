@@ -9,14 +9,47 @@ import shlex
 import tomllib
 
 
-SWITCHES = {'--visual', '--clipboard', '--audio', '--microphone', '--camera',
-            '--no-visual', '--no-clipboard', '--no-audio', '--no-microphone',
-            '--no-camera', '--internet', '--no-internet', '--host-loopback',
-            '--shell-rc', '--no-shell-rc', '--ephemeral', '--swap',
-            '--app-home', '--exclusive'}
-VALUES = {'--memory', '--cpus', '--network', '--allow-port', '--expose-port',
-          '--desktop-layout', '--swap-mib', '--env', '-m', '-p', '-n',
-          '--profile', '--exclusive-path', '-P', '--persist'}
+# The one declarative flag list: long name -> (cluster letter or None, kind).
+# The launcher (mbox.sh.in) implements the same grammar imperatively in its
+# option case; tests/mbox-options.py cross-checks the two so they cannot
+# drift. Rules may use any of these; interactive-only options (--config,
+# --project, --nix-cache, ...) are deliberately absent.
+FLAGS = {
+    '--visual': ('v', 'switch'), '--clipboard': ('c', 'switch'),
+    '--audio': ('a', 'switch'), '--microphone': ('r', 'switch'),
+    '--camera': ('l', 'switch'), '--internet': ('i', 'switch'),
+    '--host-loopback': (None, 'switch'), '--shell-rc': ('b', 'switch'),
+    '--ephemeral': ('e', 'switch'), '--swap': ('s', 'switch'),
+    '--app-home': ('d', 'switch'), '--exclusive': ('x', 'switch'),
+    '--gpu': ('g', 'switch'),
+    '--no-visual': (None, 'switch'), '--no-clipboard': (None, 'switch'),
+    '--no-audio': (None, 'switch'), '--no-microphone': (None, 'switch'),
+    '--no-camera': (None, 'switch'), '--no-internet': (None, 'switch'),
+    '--no-shell-rc': (None, 'switch'),
+    '--memory': ('m', 'value'), '--cpus': (None, 'value'),
+    '--network': ('n', 'value'), '--allow-port': ('p', 'value'),
+    '--expose-port': (None, 'value'), '--desktop-layout': (None, 'value'),
+    '--swap-mib': (None, 'value'), '--env': (None, 'value'),
+    '--profile': (None, 'value'), '--exclusive-path': (None, 'value'),
+    '--persist': ('P', 'value'),
+}
+
+
+def _names(kind):
+    names = set()
+    for name, (short, flag_kind) in FLAGS.items():
+        if flag_kind == kind:
+            names.add(name)
+            if short:
+                names.add('-' + short)
+    return names
+
+
+SWITCHES = _names('switch')
+VALUES = _names('value')
+# Cluster letter -> long name. Single-dash tokens are walked letter by
+# letter; only the launcher's case gives the letters meaning besides this.
+SHORT = {letter: name for name, (letter, _) in FLAGS.items() if letter}
 # Abbreviations may not shadow any launcher option, even one disallowed in flags.
 RESERVED = SWITCHES | VALUES | {'--help', '--config', '--no-config', '--project',
     '--read-only', '--read-write', '--file', '--persist', '--nix-cache', '--image',
@@ -60,9 +93,21 @@ def validate_flags(flags):
             index += 1
             if index == len(flags) or not flags[index] or flags[index].startswith('-'):
                 raise ValueError(f'missing profile flag value: {flag}')
-        elif flag not in SWITCHES and not (flag.startswith('-') and not flag.startswith('--')
-                                          and len(flag) > 1 and set(flag[1:]) <= set('avcirlsbdxe')):
-            raise ValueError(f'unsupported profile flag: {flag}')
+        elif flag not in SWITCHES:
+            if flag.startswith('--') or not flag.startswith('-') or len(flag) < 2:
+                raise ValueError(f'unsupported profile flag: {flag}')
+            for position, letter in enumerate(flag[1:]):
+                if letter not in SHORT:
+                    raise ValueError(f'unsupported profile flag: -{letter}')
+                if FLAGS[SHORT[letter]][1] == 'value' and position != len(flag) - 2:
+                    raise ValueError(
+                        f'profile flag -{letter} takes a value and must end the cluster: {flag}')
+            if FLAGS[SHORT[flag[-1]]][1] == 'value':
+                # Legacy TOML entries can still carry raw clusters; a trailing
+                # value letter consumes the next token, as the launcher would.
+                index += 1
+                if index == len(flags) or not flags[index] or flags[index].startswith('-'):
+                    raise ValueError(f'missing profile flag value: {flag}')
         index += 1
 
 
@@ -109,10 +154,16 @@ def parse_lines(text):
                 if index == start:
                     raise ValueError(f'mboxrc line {number}: {token} needs a value')
             else:
-                entry['flags'].append(token)
-                if token in VALUES:
+                # Single-dash clusters are walked letter by letter here, the
+                # same grammar the launcher applies interactively; after this
+                # only single letters and --long names remain in 'flags'.
+                expanded = (['-' + letter for letter in token[1:]]
+                            if token.startswith('-') and not token.startswith('--')
+                            and len(token) > 2 else [token])
+                entry['flags'].extend(expanded)
+                if expanded[-1] in VALUES:
                     if index == len(tokens):
-                        raise ValueError(f'mboxrc line {number}: {token} needs a value')
+                        raise ValueError(f'mboxrc line {number}: {expanded[-1]} needs a value')
                     entry['flags'].append(tokens[index]); index += 1
         data[section][name] = entry
     return data

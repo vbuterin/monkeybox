@@ -236,23 +236,16 @@ CMD_TAKEN=0
 
 while [ $# -gt 0 ]; do
     # Expand here, never in a pre-pass: application arguments stay untouched.
-    # Validate the entire cluster before applying any of it. Values are always
-    # separate argv entries; only the final short option may take arguments.
+    # Clusters are split blind, letter by letter; the option case below is the
+    # only place a letter means anything, so unknown letters fail there with
+    # the normal unknown-option error. Values are separate argv entries, so a
+    # value-taking letter only works as the final letter of a cluster (the
+    # case sees the next letter as a missing value otherwise).
     if [[ "$1" = -?* && "$1" != --* && ${#1} -gt 2 ]]; then
         cluster="${1#-}"
         cluster_args=()
         for ((i=0; i<${#cluster}; i++)); do
-            letter="${cluster:i:1}"
-            case "$letter" in
-                a|r|v|i|c|l|s|b|d|x|e|h) ;;
-                p|n|P|f|C|m)
-                    if [ "$i" -ne "$((${#cluster}-1))" ]; then
-                        echo "mbox: -$letter takes arguments and must be last in '$1'" >&2
-                        exit 2
-                    fi ;;
-                *) echo "mbox: unknown option '-$letter' in '$1'" >&2; exit 2 ;;
-            esac
-            cluster_args+=("-$letter")
+            cluster_args+=("-${cluster:i:1}")
         done
         shift
         set -- "${cluster_args[@]}" "$@"

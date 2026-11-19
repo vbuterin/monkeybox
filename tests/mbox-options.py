@@ -104,7 +104,9 @@ for letter, variable in variables.items():
         assert result.endswith(b'VALUE=value'), (letter, result)
     for cluster in ('-'+letter+'a', '-a'+letter+'i', '-'+letter+'m'):
         result = subprocess.run(['bash','-eu','-c',parser,'test',cluster,'value'],capture_output=True)
-        assert result.returncode == 2 and b'must be last' in result.stderr
+        # A value letter inside a cluster sees the next letter as its would-be
+        # value and fails the value check; only the final letter can take one.
+        assert result.returncode == 2 and b'requires a value' in result.stderr
     missing = subprocess.run(['bash','-eu','-c',parser,'test','-ai'+letter],capture_output=True)
     assert missing.returncode == 2 and b'requires a value' in missing.stderr
 
@@ -149,4 +151,36 @@ for args, expected in (
     (['--', 'echo', '-r'], b'AUDIO=0 MIC=0'),
 ):
     assert subprocess.check_output(['bash', '-eu', '-c', audio_parser, 'test', *args]).endswith(expected)
+# The declarative flag table (profiles.py) and the launcher's option case
+# must describe the same grammar: every rule flag exists at runtime, every
+# runtime flag is rule-legal or explicitly interactive-only, shorts match,
+# and value flags are exactly the ones the case reads a value for.
+import re
+import runpy
+policy = runpy.run_path(str(Path(__file__).resolve().parents[1]/'programs/mbox/profiles.py'))
+FLAGS = policy['FLAGS']
+case_flags = {}
+# Only the option case (8-space indent) defines flags; the usage text and
+# comments also mention options. findall yields '' for absent groups.
+for short, long in re.findall(r'^        (?:-([a-zA-Z]) \| )?(--[a-z0-9-]+)\)', source, re.M):
+    case_flags.setdefault(long, short or None)
+RUNTIME_ONLY = {'--help', '--config', '--no-config', '--project', '--camera-device',
+                '--image', '--migrate-home', '--nix-cache', '--fresh', '--dry-run',
+                '--diagnostics', '--read-only', '--read-write',
+                # In rules --file/-f is a resource directive, never a flag.
+                '--file'}
+for long_name, short in case_flags.items():
+    if long_name in RUNTIME_ONLY:
+        continue
+    assert long_name in FLAGS, f'runtime flag missing from profiles.FLAGS: {long_name}'
+    assert FLAGS[long_name][0] == short, f'short mismatch for {long_name}'
+for long_name, (short, kind) in FLAGS.items():
+    assert long_name in case_flags, f'profiles.FLAGS flag missing from the launcher case: {long_name}'
+    assert case_flags[long_name] == short, f'short mismatch for {long_name}'
+value_line = next(line for line in source.splitlines()
+                  if line.startswith('        -p|--allow-port'))
+value_tokens = set(value_line.strip().rstrip(')').split('|'))
+for long_name, (short, kind) in FLAGS.items():
+    in_value_line = long_name in value_tokens or (short is not None and '-'+short in value_tokens)
+    assert (kind == 'value') == in_value_line, f'kind mismatch for {long_name}'
 print('PASS: general short clusters, independent audio/microphone flags, variadic file grants/globs, option/command boundaries and invalid/missing arguments')
