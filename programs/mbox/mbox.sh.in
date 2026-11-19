@@ -125,6 +125,9 @@ Options:
       --no-clipboard      Disable a profile's clipboard default
   -c, --clipboard          Opt-in nested desktop with explicit host text transfers (requires -v)
       --desktop-layout MODE  Nested windows: side-by-side (default) or tabbed (requires -vc)
+      --float-window      Open the -v window floating at 1280x800, centered
+                          (host sway only; opt-in for apps that need a
+                          guaranteed desktop-size viewport, e.g. appimage-run)
   -a, --audio              Audio output (no host microphone or host-output monitoring)
   -r, --microphone         Microphone input (independent of audio output)
       --no-visual           Disable Wayland/Xwayland bridge (default)
@@ -219,6 +222,7 @@ if [ -t 1 ]; then MBOX_STDOUT_TTY=1; fi
 CLIPBOARD=0
 DESKTOP_LAYOUT=side-by-side
 DESKTOP_LAYOUT_SET=0
+FLOAT_WINDOW=0
 CAMERA=0
 CAMERA_DEVICE=/dev/video0
 GPU=0
@@ -318,6 +322,7 @@ while [ $# -gt 0 ]; do
                 *) echo 'mbox: --desktop-layout must be side-by-side or tabbed' >&2; exit 2 ;;
             esac
             DESKTOP_LAYOUT_SET=1; shift 2 ;;
+        --float-window) FLOAT_WINDOW=1; shift ;;
         -v | --visual) WAYLAND=1; shift ;;
         -i | --internet) NET_MODE=open; shift ;;
         -a | --audio) AUDIO=1; shift ;;
@@ -1114,6 +1119,21 @@ if [ "$WAYLAND" = 1 ]; then
         done
         [ -S "$waypipe_socket" ] || { echo 'mbox: waypipe timed out' >&2; exit 1; }
         diag waypipe "host client ready after $i polls"
+        # Opt-in window placement. The guest compositor takes seconds to map
+        # its output through waypipe, so a pid-scoped for_window rule added
+        # now always exists before the window does — no polling, no race. The
+        # rule is per-launch and keyed on the client pid, so it never matches
+        # any other desktop session's window (unlike a title-based global
+        # rule: every nested sway calls itself "wlroots - WL-1"). Dead rules
+        # are inert; a compositor reload clears them.
+        if [ "$FLOAT_WINDOW" = 1 ] && [ -n "${SWAYSOCK:-}" ]; then
+            if ! @@SWAYMSG@@ -s "$SWAYSOCK" "for_window [pid=$WAYPIPE_PID] floating enable, resize set 1280 800, move position center" 2>/dev/null; then
+                echo 'mbox: --float-window: sway refused the window rule; continuing tiled' >&2
+            fi
+        elif [ "$FLOAT_WINDOW" = 1 ]; then
+            # No private sway (nested/agent session): placement is impossible.
+            echo 'mbox: --float-window needs a private SWAYSOCK; continuing tiled' >&2
+        fi
         if [ -n "${SWAYSOCK:-}" ]; then
             # Registration is best-effort: a shared or non-private
             # XDG_RUNTIME_DIR (nested/agent sessions) makes it refuse, and a

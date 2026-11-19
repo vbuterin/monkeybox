@@ -25,7 +25,7 @@ FLAGS = {
     '--no-visual': (None, 'switch'), '--no-clipboard': (None, 'switch'),
     '--no-audio': (None, 'switch'), '--no-microphone': (None, 'switch'),
     '--no-camera': (None, 'switch'), '--no-internet': (None, 'switch'),
-    '--no-shell-rc': (None, 'switch'),
+    '--no-shell-rc': (None, 'switch'), '--float-window': (None, 'switch'),
     '--memory': ('m', 'value'), '--cpus': (None, 'value'),
     '--network': ('n', 'value'), '--allow-port': ('p', 'value'),
     '--expose-port': (None, 'value'), '--desktop-layout': (None, 'value'),

@@ -72,6 +72,7 @@ Choose a small project directory rather than a directory full of sensitive files
 | `-a` | Audio output only (guest may monitor its own playback) |
 | `-r` | Microphone input, independent of `-a` |
 | `-c` | Guest-local desktop plus explicit Sway clipboard transfers; requires `-v` |
+| `--float-window` | Host places the `-v` window floating 1280x800 centered (private Sway only); opt-in for apps needing a guaranteed desktop-size viewport, e.g. appimage-run |
 | `-l` | Selected host camera stream for invocation lifetime |
 | `-C STORE_PATH` | Export realized closure to a temporary read-only offline Nix cache |
 
