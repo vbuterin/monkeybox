@@ -31,18 +31,15 @@ if [ -d /usr/share/mbox-fonts ]; then
 else
     export FONTCONFIG_FILE=@@FONTCONFIG_FALLBACK@@
 fi
-# The nested compositor's output is the only surface crossing waypipe, so
-# rendering it with GLES2 on the virtio node removes the CPU-composition hop
-# and lets wlroots offer dmabufs to the transport. pixman stays the default
-# without a GPU; MBOX_GUEST_RENDERER (gles2|pixman) overrides both, e.g. to
-# bisect a compositor-side virgl regression without touching the store.
-if [ -n "${MBOX_GUEST_RENDERER:-}" ]; then
-    guest_renderer="$MBOX_GUEST_RENDERER"
-elif [ "${MBOX_GPU_ACTIVE:-0}" = 1 ]; then
-    guest_renderer=gles2
-else
-    guest_renderer=pixman
-fi
+# The nested compositor's output is the only surface crossing waypipe, so it
+# stays on SHM: GLES2 makes wlroots hand dmabufs to the transport, and the
+# guest-side relay cannot survive them. venus aborts inside
+# vkGetMemoryFdPropertiesKHR while importing the linear XB24 scanout buffer
+# (SIGABRT, output gone), and the gbm-first fallback wedges the guest seconds
+# after the first relayed frame. GPU rendering inside the guest is unaffected —
+# applications still reach virgl; only the output relay needs linear memory.
+# MBOX_GUEST_RENDERER=gles2 stays available to bisect the relay itself.
+guest_renderer="${MBOX_GUEST_RENDERER:-pixman}"
 export WLR_BACKENDS=wayland WLR_RENDERER="$guest_renderer" WLR_LIBINPUT_NO_DEVICES=1
 export WAYLAND_DISPLAY="$outer_display"
 export MBOX_XIM_SOCKET="$XDG_RUNTIME_DIR/xim.sock"

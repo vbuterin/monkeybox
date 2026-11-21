@@ -114,6 +114,12 @@ if [ "$wayland" = 1 ]; then
         # here — gpu-guest's export sits deeper in the wrapper chain and only
         # reaches the session command itself.
         export __EGL_VENDOR_LIBRARY_FILENAMES="@@MESA_VENUS_EGL_VENDOR@@${__EGL_VENDOR_LIBRARY_FILENAMES:+:$__EGL_VENDOR_LIBRARY_FILENAMES}"
+        # The guest's venus Vulkan ICD aborts (SIGABRT in vkGetMemoryFdPropertiesKHR)
+        # when waypipe imports a linear dmabuf — e.g. the compositor's own output
+        # buffer — killing the whole connection process. GBM import of the same
+        # buffer works, so make the guest waypipe server use its gbm dmabuf path.
+        # The host client never sees this and keeps the zero-copy Vulkan path.
+        export MBOX_DMABUF_PREFER_GBM=1
     fi
     # Debugging knob: MBOX_WAYPIPE_SERVER_DEBUG=1 runs the server with --debug,
     # surfacing its dmabuf/Vulkan/gbm fallback decisions in the session log.

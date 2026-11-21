@@ -1,8 +1,23 @@
 --- a/src/mainloop.rs
 +++ b/src/mainloop.rs
-@@ -996,20 +996,32 @@
+@@ -995,21 +995,47 @@
+     opts: &Options,
      device: Option<u64>,
  ) -> Result<DmabufDevice, String> {
++    /* mbox: the guest's venus Vulkan ICD SIGABRTs in vkGetMemoryFdPropertiesKHR
++     * when importing a linear dmabuf (the compositor's own output buffers),
++     * taking the whole connection process down. GBM import of the same buffer
++     * works, so when MBOX_DMABUF_PREFER_GBM is set, use the gbm path first
++     * and keep Vulkan as the fallback. The host client never sets this. */
++    if std::env::var_os("MBOX_DMABUF_PREFER_GBM").is_some() {
++        match setup_gbm_device(device) {
++            Ok(Some(dev)) => return Ok(DmabufDevice::Gbm(dev)),
++            Ok(None) => (),
++            Err(e) => {
++                debug!("mbox: gbm setup failed, trying Vulkan: {}", e);
++            }
++        }
++    }
      if !opts.test_skip_vulkan {
 -        if let Some(instance) = setup_vulkan_instance(
 +        match setup_vulkan_instance(
@@ -39,9 +54,20 @@
      }
      Ok(DmabufDevice::Unavailable)
  }
-@@ -1020,20 +1032,34 @@
+@@ -1019,21 +1045,45 @@
+     opts: &Options,
      device: Option<u64>,
  ) -> Result<DmabufDevice, String> {
++    /* mbox: prefer gbm on guests, see try_setup_dmabuf_instance_light */
++    if std::env::var_os("MBOX_DMABUF_PREFER_GBM").is_some() {
++        match setup_gbm_device(device) {
++            Ok(Some(dev)) => return Ok(DmabufDevice::Gbm(dev)),
++            Ok(None) => (),
++            Err(e) => {
++                debug!("mbox: gbm setup failed, trying Vulkan: {}", e);
++            }
++        }
++    }
      if !opts.test_skip_vulkan {
 -        if let Some(instance) = setup_vulkan_instance(
 +        match setup_vulkan_instance(
@@ -83,9 +109,9 @@
  }
 --- a/src/tracking.rs
 +++ b/src/tracking.rs
-@@ -227,7 +227,24 @@
+@@ -228,7 +228,24 @@
  }
-
+ 
  /** Additional information for wl_registry */
 +// mbox-only build: software application protocols, no clipboard, capture,
 +// virtual input, layer shell, output management or security-context delegation.
@@ -108,7 +134,7 @@
      /** Store global advertisements for wp_linux_drm_syncobj_manager_v1
       * until zwp_linux_dmabuf_v1 arrives and it is known whether Waypipe
       * is able to handle DMABUFs and timeline semaphores. */
-@@ -1569,6 +1583,7 @@
+@@ -1614,6 +1631,7 @@
                      obj_type: WaylandInterface::WlRegistry,
                      extra: WpExtra::WlRegistry(Box::new(ObjWlRegistry {
                          syncobj_manager_replay: Vec::new(),
@@ -116,7 +142,7 @@
                      })),
                  },
              )?;
-@@ -4027,6 +4042,14 @@
+@@ -4207,6 +4225,14 @@
          (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_GLOBAL) => {
              // filter out events
              let (name, intf, mut version) = parse_evt_wl_registry_global(msg)?;
@@ -128,11 +154,11 @@
 +                return Ok(ProcMsg::Done);
 +            }
 +            reg.mbox_globals.insert(name, (intf.to_vec(), version));
-
+ 
              /* Note: nothing that gets filtered out should ever be removed,
               * so it is not necessary to track interface name codes for global_remove */
-@@ -4204,9 +4227,30 @@
-
+@@ -4384,9 +4410,30 @@
+ 
              Ok(ProcMsg::Done)
          }
 +        (WaylandInterface::WlRegistry, OPCODE_WL_REGISTRY_GLOBAL_REMOVE) => {
